@@ -1,0 +1,18 @@
+# 公開するのは docs/ と この .gitignore だけ（2026-11-19 先生が決定）
+# いちばん上のものは全部外し、必要なものだけ「!」で戻す
+/*
+!/docs/
+!/.gitignore
+
+# 素材（VRM・音声・セリフ）は docs/ に置いてしまっても入れない
+*.vrm
+*.wav
+*.mp3
+*.ogg
+lines.json
+index.json
+
+# OS・エディタ
+Thumbs.db
+desktop.ini
+.DS_Store
