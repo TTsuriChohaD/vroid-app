@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
-import { applyIdle } from './pose.js';
+import { createMotion, headHit } from './motion.js';
 import { loadSavedModel, saveModel, deleteSavedModel } from './store.js';
 
 const $ = (id) => document.getElementById(id);
@@ -66,17 +66,24 @@ function frameView() {
 }
 $('view').addEventListener('click', () => { closeUp = !closeUp; frameView(); });
 
-// 2 回タップ（ダブルクリック）で最初の見え方に戻す
-let lastTap = 0;
+// タップ：頭に当たればなでる。それ以外の 2 回タップ（ダブルクリック）で最初の見え方に戻す
+// 指を置いてほとんど動かさずに離したときだけ（回す操作と区別する）
+let lastTap = 0, tapStart = null;
+canvas.addEventListener('pointerdown', (e) => {
+  tapStart = e.isPrimary ? { x: e.clientX, y: e.clientY, t: performance.now() } : null;
+});
 canvas.addEventListener('pointerup', (e) => {
-  if (e.pointerType === 'mouse') return;
+  const s = tapStart; tapStart = null;
+  if (!s || Math.hypot(e.clientX - s.x, e.clientY - s.y) > 10 || performance.now() - s.t > 500) return;
+  if (vrm && motion && headHit(vrm, camera, canvas, e.clientX, e.clientY)) { motion.pat(); lastTap = 0; return; }
+  if (e.pointerType === 'mouse') return;   // マウスは dblclick で
   const now = performance.now();
   if (now - lastTap < 300) { frameView(); lastTap = 0; } else lastTap = now;
 });
-canvas.addEventListener('dblclick', frameView);
+canvas.addEventListener('dblclick', (e) => { if (!(vrm && headHit(vrm, camera, canvas, e.clientX, e.clientY))) frameView(); });
 
 // ---------- 読み込み ----------
-let vrm = null;
+let vrm = null, motion = null;
 const loader = new GLTFLoader();
 loader.register((p) => new VRMLoaderPlugin(p));
 
@@ -96,10 +103,9 @@ async function loadArrayBuffer(ab, name) {
   VRMUtils.rotateVRM0(vrm);
   vrm.scene.traverse((o) => { o.frustumCulled = false; });   // 体の一部が消えるのを防ぐ
   scene.add(vrm.scene);
-  if (vrm.lookAt) vrm.lookAt.target = camera;   // 目線はこちら（カメラ）を向く
+  motion = createMotion(vrm, camera);   // 姿勢・しぐさ・表情・目線
 
-  applyIdle(vrm, 0);
-  vrm.update(0);
+  motion.update(0);
   vrm.scene.updateMatrixWorld(true);
   const hp = new THREE.Vector3();
   const head = vrm.humanoid.getNormalizedBoneNode('head');
@@ -164,28 +170,13 @@ $('forget').addEventListener('click', async () => {
 })();
 
 // PC での確かめ用（内蔵ブラウザからモデルを渡す）
-window.vroidApp = { loadArrayBuffer, frameView, camera, controls };
-
-// ---------- まばたき ----------
-let nextBlink = 2, blinkStart = -1;
-function blinkValue(t) {
-  if (t > nextBlink && blinkStart < 0) blinkStart = t;
-  if (blinkStart < 0) return 0;
-  const p = (t - blinkStart) / 0.16;
-  if (p >= 1) { blinkStart = -1; nextBlink = t + 2 + Math.random() * 4; return 0; }
-  return p < 0.5 ? p * 2 : 2 - p * 2;
-}
+window.vroidApp = { loadArrayBuffer, frameView, camera, controls, get motion() { return motion; } };
 
 // ---------- 描画のくり返し ----------
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
-  const t = clock.elapsedTime;
-  if (vrm) {
-    applyIdle(vrm, t);
-    if (vrm.expressionManager) vrm.expressionManager.setValue('blink', blinkValue(t));
-    vrm.update(dt);
-  }
   controls.update();
+  if (motion) motion.update(dt);   // 姿勢・しぐさ・表情・目線（カメラが動いたあとに）
   renderer.render(scene, camera);
 });
