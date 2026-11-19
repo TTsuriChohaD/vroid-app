@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#dfe9f3">
+<title>VRM ビューア</title>
+<style>
+  :root {
+    --bg1: #eef3f8; --bg2: #d5e2ef;
+    --fg: #1f2a36; --sub: #5a6878;
+    --btn: #ffffffd9; --btn-fg: #1f2a36; --line: #b9c7d6;
+    --accent: #3b7bd8; --err: #c0392b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg1: #1d2530; --bg2: #10151c;
+      --fg: #e8eef5; --sub: #9aa9ba;
+      --btn: #2a3442d9; --btn-fg: #e8eef5; --line: #3d4a5c;
+      --accent: #6aa3f0; --err: #ff7a6b;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; }
+  body {
+    background: linear-gradient(180deg, var(--bg1), var(--bg2));
+    color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+  .bar {
+    position: fixed; left: 0; right: 0; top: 0;
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    padding: max(10px, env(safe-area-inset-top)) 12px 10px;
+    pointer-events: none;
+  }
+  .bar > * { pointer-events: auto; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    min-height: 44px; padding: 0 16px;
+    border: 1px solid var(--line); border-radius: 22px;
+    background: var(--btn); color: var(--btn-fg);
+    font: inherit; font-size: 15px; cursor: pointer;
+    backdrop-filter: blur(6px);
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn:active { transform: scale(0.97); }
+  .btn[hidden] { display: none; }
+  #file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+  #status {
+    position: fixed; left: 50%; bottom: max(16px, env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    max-width: calc(100% - 32px);
+    padding: 8px 14px; border-radius: 10px;
+    background: var(--btn); color: var(--fg); font-size: 14px; text-align: center;
+  }
+  #status:empty { display: none; }
+  #status.err { color: var(--err); }
+
+  #intro {
+    position: fixed; left: 16px; right: 16px; top: 50%; transform: translateY(-50%);
+    max-width: 420px; margin: 0 auto; text-align: center; line-height: 1.7;
+  }
+  #intro h1 { font-size: 20px; margin: 0 0 8px; }
+  #intro p { margin: 0 0 16px; color: var(--sub); font-size: 15px; }
+  #intro[hidden] { display: none; }
+
+  dialog {
+    width: min(480px, calc(100% - 32px)); max-height: 80vh;
+    border: 1px solid var(--line); border-radius: 14px;
+    background: var(--bg1); color: var(--fg); padding: 20px; line-height: 1.7; font-size: 15px;
+  }
+  dialog::backdrop { background: #0006; }
+  dialog h2 { font-size: 18px; margin: 0 0 10px; }
+  dialog ul { padding-left: 1.2em; margin: 0 0 12px; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<div class="bar">
+  <label class="btn primary" for="file">VRM を選ぶ</label>
+  <input id="file" type="file">
+  <button class="btn" id="view" type="button" hidden>顔に寄る</button>
+  <button class="btn" id="about" type="button">？</button>
+</div>
+
+<div id="intro">
+  <h1>VRM ビューア</h1>
+  <p>スマホの中の VRM ファイルを選ぶと、キャラクターを表示します。<br>ファイルはこの端末の中だけで読み込み、どこにも送りません。</p>
+  <label class="btn primary" for="file">VRM を選ぶ</label>
+</div>
+
+<div id="status"></div>
+
+<dialog id="aboutDlg">
+  <h2>このページについて</h2>
+  <ul>
+    <li>1 本指で回す、2 本指で寄る・引く・ずらす。2 回タップで最初の見え方に戻ります</li>
+    <li>選んだファイルはこの端末の中で読むだけで、外には送りません</li>
+    <li>表示に three.js と three-vrm（どちらも MIT ライセンス）を使っています</li>
+  </ul>
+  <form method="dialog"><button class="btn">閉じる</button></form>
+</dialog>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+  "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.1.0/lib/three-vrm.module.js"
+} }
+</script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
