@@ -4,6 +4,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import { applyIdle } from './pose.js';
+import { loadSavedModel, saveModel, deleteSavedModel } from './store.js';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -119,10 +120,48 @@ $('file').addEventListener('change', async (e) => {
   } catch (err) {
     console.error(err);
     setStatus('読み込めませんでした：' + (err && err.message ? err.message : err), true);
+    return;
+  }
+  // 表示できたものだけ保存する（次に開いたとき自動で表示）
+  try {
+    await saveModel(file);
+  } catch (err) {
+    console.warn(err);
+    setStatus('表示はできましたが、保存できませんでした（次も選んでください）', true);
+    setTimeout(() => setStatus(''), 5000);
   }
 });
 
-$('about').addEventListener('click', () => $('aboutDlg').showModal());
+// ---------- このページについて（保存した VRM の確認・消す） ----------
+const fmtMB = (n) => (n / 1048576).toFixed(1) + ' MB';
+$('about').addEventListener('click', async () => {
+  const rec = await loadSavedModel();
+  $('savedInfo').textContent = rec ? '保存している VRM：' + rec.name + '（' + fmtMB(rec.size) + '）' : '保存している VRM はありません';
+  $('forget').hidden = !rec;
+  $('aboutDlg').showModal();
+});
+$('forget').addEventListener('click', async () => {
+  try {
+    await deleteSavedModel();
+    $('savedInfo').textContent = '保存した VRM を消しました（表示中のキャラクターは、ページを閉じるまで残ります）';
+    $('forget').hidden = true;
+  } catch (err) {
+    $('savedInfo').textContent = '消せませんでした：' + (err && err.message ? err.message : err);
+  }
+});
+
+// ---------- 開いたとき：保存した VRM があれば自動で表示 ----------
+(async () => {
+  const rec = await loadSavedModel();
+  if (!rec) { $('intro').hidden = false; return; }
+  try {
+    await loadArrayBuffer(await rec.blob.arrayBuffer(), rec.name);
+  } catch (err) {
+    console.error(err);
+    $('intro').hidden = false;
+    setStatus('保存した VRM を読めませんでした。もう一度選んでください', true);
+  }
+})();
 
 // PC での確かめ用（内蔵ブラウザからモデルを渡す）
 window.vroidApp = { loadArrayBuffer, frameView, camera, controls };

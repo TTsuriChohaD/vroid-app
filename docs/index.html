@@ -76,6 +76,10 @@
   dialog::backdrop { background: #0006; }
   dialog h2 { font-size: 18px; margin: 0 0 10px; }
   dialog ul { padding-left: 1.2em; margin: 0 0 12px; }
+  dialog .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  dialog .row form { margin: 0; }
+  #savedInfo { margin: 0 0 12px; color: var(--sub); font-size: 14px; }
+  #savedInfo:empty { display: none; }
 </style>
 </head>
 <body>
@@ -88,9 +92,9 @@
   <button class="btn" id="about" type="button">？</button>
 </div>
 
-<div id="intro">
+<div id="intro" hidden>
   <h1>VRM ビューア</h1>
-  <p>スマホの中の VRM ファイルを選ぶと、キャラクターを表示します。<br>ファイルはこの端末の中だけで読み込み、どこにも送りません。</p>
+  <p>スマホの中の VRM ファイルを選ぶと、キャラクターを表示します。<br>ファイルはこの端末の中だけで読み込み、どこにも送りません。<br>一度選ぶと、次からは自動で表示します。</p>
   <label class="btn primary" for="file">VRM を選ぶ</label>
 </div>
 
@@ -101,9 +105,14 @@
   <ul>
     <li>1 本指で回す、2 本指で寄る・引く・ずらす。2 回タップで最初の見え方に戻ります</li>
     <li>選んだファイルはこの端末の中で読むだけで、外には送りません</li>
+    <li>選んだ VRM は、この端末の Chrome の中に保存し、次に開いたときに自動で表示します。空きが少ないときなどに Chrome が消すことがあります。そのときはもう一度選んでください</li>
     <li>表示に three.js と three-vrm（どちらも MIT ライセンス）を使っています</li>
   </ul>
-  <form method="dialog"><button class="btn">閉じる</button></form>
+  <p id="savedInfo"></p>
+  <div class="row">
+    <button class="btn" id="forget" type="button" hidden>保存した VRM を消す</button>
+    <form method="dialog"><button class="btn">閉じる</button></form>
+  </div>
 </dialog>
 
 <script type="importmap">
