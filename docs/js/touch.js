@@ -31,6 +31,7 @@ const STROKE_PX = 40;   // なでたとみなす指の動きの長さ（画面�
 // スカートの範囲（m）：腰の骨より above 上 〜 太ももの付け根（upperLeg の骨）より belowLegTop 下
 const SKIRT = { above: 0.04, belowLegTop: 0.08 };
 const TAP_PX = 10, TAP_MS = 500;
+const FACE_TOP = 0.01;  // 顔（ほお）の上の端：目の骨より何 m 上まで（それより上のおでこ・前髪は頭）
 
 // 当たった点が体のどこか
 export function regionAt(vrm, point) {
@@ -51,11 +52,14 @@ export function regionAt(vrm, point) {
       if (segDist(near, tip) < 0.07) return 'hand';
     }
   }
-  // 頭と顔：首より上。頭の骨から見て前・下の方が顔（ほお）
+  // 頭と顔：首より上。頭の骨から見て前で、目の高さより下が顔（ほお）。おでこ・前髪は頭
+  // （2026-11-20 先生：おでこにふれても照れていた → 境目を目の高さに下げた）
   const head = B('head'), neck = wp('neck');
   if (head && neck && P.y > neck.y + 0.03) {
     const local = head.worldToLocal(P.clone());
-    return local.z > 0.04 && local.y < 0.11 ? 'cheek' : 'head';
+    const eye = wp('leftEye') || wp('rightEye');
+    const faceTop = (eye ? head.worldToLocal(eye.clone()).y : 0.06) + FACE_TOP;
+    return local.z > 0.04 && local.y < faceTop ? 'cheek' : 'head';
   }
   // 肩：上腕の付け根の高さのあたりで、体の真ん中から横へ離れたところ（服が厚くても当たるように、骨からの距離ではなく位置で見る）
   const hipsNode = B('hips');
