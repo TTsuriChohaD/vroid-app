@@ -90,11 +90,18 @@ export function createMotion(vrm, camera, { getMotion = async () => null } = {})
     // 1〜3. 元に戻す → VRMA の下書き → コードの入らない骨を重みで
     resetPose();
     const a = player.update(dt);
-    if (a) {
+    const hips = node('hips');
+    // 最後まで再生したあと（終わりに混ぜている間）は、最後の姿勢をそのまま使う
+    // （three は終わったあと骨を書かないので、読み直すと「回転なし」から戻ることになり、肩などが一瞬跳ねた）
+    if (a && !(a.finished && snap.size)) {
       snap.clear();
       for (const b of a.bones) { const n = node(b); if (n) snap.set(b, n.quaternion.clone()); }
-      const hips = node('hips'); if (hips) snapHips.copy(hips.position);
-      resetPose();
+      if (hips) snapHips.copy(hips.position);
+    }
+    // VRMA が終わったフレームは、three の再生係が「再生を始めたときの姿勢」を骨に書き戻す。
+    // そのまま使うと 1 フレームだけ姿勢が飛ぶ（2026-11-20「カクッ」の原因）ので、毎回ここで戻し直す
+    resetPose();
+    if (a) {
       for (const [b, q] of snap) if (!REPLACE.test(b)) node(b).quaternion.copy(qId).slerp(q, a.w);
       if (a.bones.has('hips') && hips) hips.position.lerpVectors(restHips, snapHips, a.w);
     }
@@ -136,6 +143,7 @@ export function createMotion(vrm, camera, { getMotion = async () => null } = {})
     const anim = await getMotion(name);
     if (!anim) return false;
     idleType = null; idleW = 0;
+    snap.clear();
     player.play(anim, name, opts);
     return true;
   }

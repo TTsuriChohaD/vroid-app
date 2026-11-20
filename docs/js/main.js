@@ -185,15 +185,19 @@ $('pick').addEventListener('click', () => {
   const ch = currentChar();
   const names = ch ? [...ch.motions.keys()].sort() : [];
   $('motionSel').innerHTML = '';
-  for (const n of names) $('motionSel').add(new Option(n, n));
-  $('motionBox').hidden = !names.length;
+  for (const n of names) $('motionSel').add(new Option(n + '（VRMA）', n));
+  for (const [v, label] of CODE_MOTIONS) $('motionSel').add(new Option(label, v));
   $('noMotion').hidden = !!names.length;
   $('pickDlg').showModal();
 });
+// コードの動きも試せるように（「code:」で始まる値）
+const CODE_MOTIONS = [['code:wave', '手を振る（コード）'], ['code:look', '見回す（コード）'], ['code:pat', 'なでる（頭のタップと同じ）']];
 $('motionGo').addEventListener('click', async () => {
   const name = $('motionSel').value;
   $('pickDlg').close();
   if (!motion || !name) return;
+  if (name === 'code:wave' || name === 'code:look') { motion.startIdle(name.slice(5)); return; }
+  if (name === 'code:pat') { motion.pat(); return; }
   if (!(await motion.playMotion(name))) flash('動きが見つかりませんでした：' + name, true);
 });
 $('charSel').addEventListener('change', fillOutfits);
@@ -247,9 +251,28 @@ $('forget').addEventListener('click', async () => {
   }
 });
 
+// ---------- PC で確かめるとき：tools/serve.ps1 が出す local/VroidApp をそのまま読む ----------
+// （localhost で開いたときだけ。素材は PC の中のまま。保存はしない）
+const onPC = ['localhost', '127.0.0.1'].includes(location.hostname);
+async function loadFromPC() {
+  const r = await fetch('/__pack/list', { cache: 'no-store' });
+  if (!r.ok) return false;
+  const list = await r.json();
+  if (!list.length) return false;
+  setStatus('PC の local/VroidApp を読み込み中…');
+  const entries = await Promise.all(list.map(async (p) => {
+    const res = await fetch('/__pack/' + p.split('/').map(encodeURIComponent).join('/'), { cache: 'no-store' });
+    return { path: p, blob: await res.blob() };
+  }));
+  await usePack(entries, { save: false });
+  flash('PC の local/VroidApp を表示しています（' + list.length + ' ファイル）');
+  return true;
+}
+
 // ---------- 開いたとき：保存したフォルダ（なければ VRM）があれば自動で表示 ----------
 (async () => {
   try {
+    if (onPC && await loadFromPC().catch(() => false)) return;
     const p = await loadSavedPack();
     if (p) { await usePack(p.files, { save: false }); return; }
     const m = await loadSavedModel();
@@ -265,7 +288,7 @@ $('forget').addEventListener('click', async () => {
 // PC での確かめ用（内蔵ブラウザからモデルやフォルダを渡す）
 window.vroidApp = {
   loadArrayBuffer, frameView, camera, controls, usePack,
-  get motion() { return motion; }, get pack() { return pack; }, get current() { return current; },
+  get motion() { return motion; }, get pack() { return pack; }, get current() { return current; }, get vrm() { return vrm; },
 };
 
 // ---------- 描画のくり返し ----------

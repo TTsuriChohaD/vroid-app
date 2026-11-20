@@ -15,7 +15,7 @@ export async function loadVRMA(blob) {
   return anim;
 }
 
-export const FADE_SEC = 0.3;   // 始め・終わりに、コードの姿勢と混ぜる時間
+export const FADE_SEC = 0.4;   // 始め・終わりに、コードの姿勢と混ぜる時間（0.3 → 0.4、2026-11-20 終わりの「カクッ」を和らげる）
 
 // VRM 1 体ぶんの再生係
 export function createPlayer(vrm) {
@@ -71,7 +71,9 @@ export function createPlayer(vrm) {
     const fadeIn = Math.min(1, cur.t / FADE_SEC);
     const fadeOut = cur.loop ? 1 : Math.min(1, Math.max(0, (cur.dur - cur.t) / FADE_SEC + 1));   // 終わってから FADE_SEC で戻す
     const e = (x) => x * x * (3 - 2 * x);
-    return { w: e(Math.min(fadeIn, fadeOut)), bones: cur.bones, hasExpr: cur.hasExpr, hasLookAt: cur.hasLookAt, name: cur.name };
+    // finished：最後まで再生した（three はこのあと骨を書かなくなるので、motion.js が最後の姿勢を持ち続ける）
+    return { w: e(Math.min(fadeIn, fadeOut)), bones: cur.bones, hasExpr: cur.hasExpr, hasLookAt: cur.hasLookAt, name: cur.name,
+      finished: !cur.loop && cur.t >= cur.dur };
   }
 
   return { play, stop, update, get playing() { return cur ? cur.name : null; } };

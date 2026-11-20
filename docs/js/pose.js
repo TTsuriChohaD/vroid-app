@@ -194,7 +194,9 @@ export function applyPose(vrm, t, s) {
   const B = (n) => vrm.humanoid.getNormalizedBoneNode(n);
   const add = (b, x, y, z) => { if (b) b.quaternion.multiply(_q.setFromEuler(_e.set(x, y, z))); };
   const breath = Math.sin(t * BREATH.speed);
-  const stance = 1 - (s.animW || 0);   // 待機の構え（うつむき・かしげ）は、VRMA の間は控える
+  // 待機の構え（うつむき・かしげ）は VRMA の間も足し込んだまま。
+  // 以前は VRMA の間だけ控えていたが、終わるときに 0.3 秒でうつむきに戻って「カクッ」とした（2026-11-20 先生）
+  const stance = 1;
 
   // 体：呼吸とゆらぎ
   add(B('spine'), breath * BREATH.spine, 0, Math.sin(t * 0.7) * BREATH.sway);
