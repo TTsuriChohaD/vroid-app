@@ -53,9 +53,28 @@ export const PAT = {
   happy: 0.9,     // うれしそうに目を細める
 };
 
+// 手をひざに置く（前かがみ。2026-11-20 先生）。値はキャラクターの左手側。右手側は X を反転する
+export const KNEES = {
+  palm: [0.0, 0.1, 0.07],    // 手のひらの中心：ひざ（lowerLeg の骨）から 上・前（m）。ひざ頭の少し上
+  // 腕をまっすぐ伸ばして体を支える（2026-11-20 先生）：手を置く所を太ももに沿って上下にずらし、肩からの距離を腕の長さに合わせる
+  straight: 0.998,           // 腕の伸ばし具合（1＝伸びきる）。0.998 で肘の曲がりは約 7 度（0.985 でも約 20 度曲がって見えた）
+  slide: [-0.12, 0.15],      // ずらしてよい範囲（m、- でひざの下へ、+ で太ももの上へ）。体を回すと片方の肩がひざに近づくので、下へ広めに
+  thumb: [-1, 0.3, 0.4],     // 左手の親指の向き（体の内側・少し上・前）
+  elbow: [-0.9, 0.0, 0.3],   // 肘を逃がす向き（右腕の値。外・少し前）
+  curl: 0.3,                 // 指を軽く曲げて、ひざを包む
+  pull: 0.15,                // 重ねた手を離す長さ（手を置く時間のうちの割合。手を離しながら、すぐにひざへ伸ばす）
+};
+// 手をひざに置く動き（VRMA の名前 → 時刻、秒）：手を離し始め・置き終わり・ひざから離し始め・重ね終わり
+export const HAND_MOTIONS = {
+  // 手首の向きが大きく変わるので、ゆっくりめに（短いと手首がくるっと速く回った）
+  // 動きは 12.3 秒（かがむ 1.1・揺れながら保つ 10・戻る 1.2）。手は体と同時に伸ばし、かがみ終わる少し前にひざに着く。
+  // 起き上がるときは、体と同時にひざから離す（2026-11-20 先生：前は手が体より遅れていた）
+  lean_forward: { pose: 'knees', times: [0.0, 0.95, 11.1, 12.2] },
+};
+
 // ---------- キャラクターごとの数値（character.json の "pose"）で上書きする ----------
 // 例：{ "CLASP": { "curl": 0.2, "head": [0.06, 0, 0.03] } }。書いていない数値は標準の値のまま
-const TABLES = { CLASP, BREATH, LOOK, WAVE, PAT };
+const TABLES = { CLASP, BREATH, LOOK, WAVE, PAT, KNEES, HAND_MOTIONS };
 const DEFAULTS = JSON.parse(JSON.stringify(TABLES));
 export function setPoseOverrides(over) {
   for (const [name, table] of Object.entries(TABLES)) {
@@ -171,6 +190,37 @@ const OUT = 0.4;
 export const pullPart = (w) => smooth01(w / OUT);
 export const actPart = (w) => smooth01((w - OUT) / (1 - OUT));
 
+// 両手をひざに置く（w：0 重ねたまま → 1 置いた）。前半で重ねた手を離し、後半でひざへ。脚・背骨は VRMA が先に決めてある
+// 体を支えるために手を伸ばす動きなので、手を離すのはごく短く、すぐにひざへ向かう（2026-11-20 先生：腕が遅れている）
+function placeOnKnees(B, root, w) {
+  const pw = smooth01(w / KNEES.pull), aw = smooth01(w);
+  const rq = new THREE.Quaternion(); root.getWorldQuaternion(rq);
+  for (const side of ['left', 'right']) {
+    const knee = B(side + 'LowerLeg'); if (!knee) continue;
+    const m = side === 'left' ? 1 : -1;
+    pullOut(B, side, pw);
+    if (aw <= 0) continue;
+    knee.updateWorldMatrix(true, false);
+    const K = new THREE.Vector3(); knee.getWorldPosition(K);
+    const base = K.clone().add(V3(KNEES.palm[0] * m, KNEES.palm[1], KNEES.palm[2]).applyQuaternion(rq));
+    // 腕がまっすぐになる所を、太ももに沿って探す（肩から手のひらまでの距離＝腕の長さ×straight）
+    const ua = B(side + 'UpperArm'), la = B(side + 'LowerArm'), hd = B(side + 'Hand'), thighB = B(side + 'UpperLeg');
+    const S = new THREE.Vector3(); ua.getWorldPosition(S);
+    const up = thighB.getWorldPosition(new THREE.Vector3()).sub(K).normalize();
+    const reach = (la.position.length() + hd.position.length()) * KNEES.straight + PALM.along;
+    const at = (s) => base.clone().add(up.clone().multiplyScalar(s));
+    let [lo, hi] = KNEES.slide;   // 上へずらすほど肩に近づく
+    if (at(lo).distanceTo(S) <= reach) hi = lo;        // ひざの下でも届く（体が起きている途中など）→ 肘は少し曲がる
+    else if (at(hi).distanceTo(S) >= reach) lo = hi;   // 太ももの上でも届かない → 届く所まで手を伸ばす
+    else for (let i = 0; i < 12; i++) { const mid = (lo + hi) / 2; if (at(mid).distanceTo(S) > reach) lo = mid; else hi = mid; }
+    const want = at((lo + hi) / 2);
+    const thumb = V3(KNEES.thumb[0] * m, KNEES.thumb[1], KNEES.thumb[2]).applyQuaternion(rq).normalize();
+    // 手首は腕より少し遅れて向きを変える（遅らせすぎると、終わりの方で手首がくるっと速く回った）
+    reachPalm(B, side, want, aw, thumb, V3(...KNEES.elbow), smooth01((aw - 0.1) / 0.9));
+  }
+  return aw;
+}
+
 // 手を振る姿勢（右腕の上腕・前腕の回転）。数値の表 WAVE から作る
 function wavePose() {
   const ua = new THREE.Quaternion().setFromEuler(new THREE.Euler(...WAVE.upperArm, 'XYZ'));
@@ -207,6 +257,8 @@ export function applyPose(vrm, t, s) {
     for (const part of ['UpperArm', 'LowerArm', 'Hand']) { const b = B(side + part); if (b) b.quaternion.identity(); }
   }
   clasp(B, breath, s.blendShoulders);
+  // 手をひざに置く（前かがみ）
+  const kneeAct = s.kneesW > 0 ? placeOnKnees(B, vrm.scene, s.kneesW) : 0;
 
   // 首と頭：少しうつむき・かしげる。見回す
   const lookYaw = s.lookW * LOOK.yaw * Math.sin(s.lookP * Math.PI * 2);
@@ -239,6 +291,7 @@ export function applyPose(vrm, t, s) {
   }
 
   // 指：ふだんはほとんど伸ばす。手を振るときは開く
-  curlHand(B, 'right', CLASP.curl * (1 - waveAct));
-  curlHand(B, 'left', CLASP.curl);
+  const curl = CLASP.curl + (KNEES.curl - CLASP.curl) * kneeAct;
+  curlHand(B, 'right', curl * (1 - waveAct));
+  curlHand(B, 'left', curl);
 }

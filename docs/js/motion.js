@@ -8,7 +8,7 @@
 //   5. 腕・肩・指（入れ替える骨）は、コードの姿勢から VRMA の角度へ重み w で近づける ＝ ② 切り替える
 //   6. 表情・まばたき・目線（③ 見る先だけ決める）→ vrm.update()
 import * as THREE from 'three';
-import { applyPose, LOOK, WAVE, PAT } from './pose.js';
+import { applyPose, LOOK, WAVE, PAT, HAND_MOTIONS } from './pose.js';
 import { createPlayer } from './vrma.js';
 
 // 待機中のしぐさ
@@ -121,7 +121,16 @@ export function createMotion(vrm, camera, { getMotion = async () => null, emotio
     const waveW = idleType === 'wave' ? idleW : 0;
     const isShoulder = (b) => /Shoulder$/.test(b);
     const blendShoulders = a ? () => { for (const [b, q] of snap) if (isShoulder(b)) { node(b).quaternion.slerp(q, a.w); node(b).updateMatrixWorld(true); } } : null;
-    applyPose(vrm, t, { lookW, lookP: idleP, waveW, patW: patByVRMA ? 0 : pw, patT: t - patAt, animW, blendShoulders });
+    // 手をひざに置く動き（前かがみ）：VRMA の時刻に合わせて、手を置く重みを決める
+    const hm = a && HAND_MOTIONS[a.name];
+    let kneesW = 0;
+    if (hm && hm.pose === 'knees') {
+      const [t0, t1, t2, t3] = hm.times, pt = player.time;
+      // 直線で渡す（pose.js の側で、手を離す・置く段取りがなめらかにつなぐ。ここでもなめらかにすると途中が速くなりすぎた）
+      const lin = (x) => Math.min(1, Math.max(0, x));
+      kneesW = Math.min(lin((pt - t0) / (t1 - t0)), 1 - lin((pt - t2) / (t3 - t2)));
+    }
+    applyPose(vrm, t, { lookW, lookP: idleP, waveW, patW: patByVRMA ? 0 : pw, patT: t - patAt, animW, blendShoulders, kneesW });
 
     // 5. 腕・指は、コードの姿勢から VRMA へ切り替える（肩は腕を解く前に混ぜてある）
     if (a) for (const [b, q] of snap) if (REPLACE.test(b) && !isShoulder(b)) node(b).quaternion.slerp(q, a.w);

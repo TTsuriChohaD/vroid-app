@@ -18,8 +18,10 @@ export async function loadVRMA(blob) {
 export const FADE_SEC = 0.4;   // 始め・終わりに、コードの姿勢と混ぜる時間（0.3 → 0.4、2026-11-20 終わりの「カクッ」を和らげる）
 
 // VRM 1 体ぶんの再生係
+// three の AnimationMixer は使わず、各トラックの値を自分で読んで骨に書く（2026-11-20）。
+// AnimationMixer は「前のコマと値が同じなら骨に書かない」ので、毎フレーム姿勢を元に戻すこのページでは、
+// 同じ角度を保つ間だけ骨が元の姿勢に戻り、保つ所の始めと終わりで跳ねた（前かがみの「ガクガク」の原因）
 export function createPlayer(vrm) {
-  const mixer = new THREE.AnimationMixer(vrm.scene);
   // VRMA の目線を受け取る係（自動で作られると警告が出るので先に作る）
   if (vrm.lookAt && !vrm.scene.children.some((o) => o instanceof VRMLookAtQuaternionProxy)) {
     const proxy = new VRMLookAtQuaternionProxy(vrm.lookAt);
@@ -44,12 +46,14 @@ export function createPlayer(vrm) {
       const b = nodeToBone.get(node);
       if (b && (prop === 'quaternion' || prop === 'position')) bones.add(b);
     }
-    const action = mixer.clipAction(clip);
-    action.setLoop(loop ? THREE.LoopRepeat : THREE.LoopOnce, loop ? Infinity : 1);
-    action.clampWhenFinished = true;
-    action.play();
+    // トラックごとに「値を読む係」と「書き込む先」を用意する
+    const tracks = clip.tracks.map((tr) => {
+      const binding = new THREE.PropertyBinding(vrm.scene, tr.name);
+      binding.bind();
+      return { interp: tr.createInterpolant(), binding };
+    }).filter((x) => x.binding.node);
     cur = {
-      action, clip, bones, name, t: 0, dur: clip.duration, loop,
+      tracks, bones, name, t: 0, dur: clip.duration, loop,
       hasExpr: vrmAnimation.expressionTracks.preset.size + vrmAnimation.expressionTracks.custom.size > 0,
       hasLookAt: vrmAnimation.lookAtTrack != null,
     };
@@ -57,8 +61,7 @@ export function createPlayer(vrm) {
 
   function stop() {
     if (!cur) return;
-    cur.action.stop();
-    mixer.uncacheClip(cur.clip);
+    for (const x of cur.tracks) x.binding.unbind();
     cur = null;
   }
 
@@ -67,7 +70,9 @@ export function createPlayer(vrm) {
     if (!cur) return null;
     cur.t += dt;
     if (!cur.loop && cur.t >= cur.dur + FADE_SEC) { stop(); return null; }
-    mixer.update(dt);
+    // 今の時刻の値を、毎フレーム必ず骨（と表情・目線）に書く。終わったあとは最後の姿勢のまま
+    const time = cur.loop ? cur.t % cur.dur : Math.min(cur.t, cur.dur);
+    for (const x of cur.tracks) x.binding.setValue(x.interp.evaluate(time), 0);
     const fadeIn = Math.min(1, cur.t / FADE_SEC);
     const fadeOut = cur.loop ? 1 : Math.min(1, Math.max(0, (cur.dur - cur.t) / FADE_SEC + 1));   // 終わってから FADE_SEC で戻す
     const e = (x) => x * x * (3 - 2 * x);
@@ -76,5 +81,5 @@ export function createPlayer(vrm) {
       finished: !cur.loop && cur.t >= cur.dur };
   }
 
-  return { play, stop, update, get playing() { return cur ? cur.name : null; }, get duration() { return cur ? cur.dur : 0; } };
+  return { play, stop, update, get playing() { return cur ? cur.name : null; }, get duration() { return cur ? cur.dur : 0; }, get time() { return cur ? cur.t : 0; } };
 }
