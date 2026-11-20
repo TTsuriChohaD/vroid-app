@@ -84,6 +84,9 @@
   dialog ul { padding-left: 1.2em; margin: 0 0 12px; }
   dialog .row { display: flex; gap: 8px; flex-wrap: wrap; }
   dialog .row form { margin: 0; }
+  dialog h2.sub { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--line); }
+  dialog .note { color: var(--sub); font-size: 14px; margin: 0; }
+  #motionBox[hidden], #noMotion[hidden] { display: none; }
   #savedInfo { margin: 0 0 12px; color: var(--sub); font-size: 14px; white-space: pre-line; }
   #savedInfo:empty { display: none; }
 </style>
@@ -114,6 +117,12 @@
     <button class="btn primary" id="pickGo" type="button">表示する</button>
     <form method="dialog"><button class="btn">やめる</button></form>
   </div>
+  <h2 class="sub">動きを試す</h2>
+  <div id="motionBox" hidden>
+    <p class="field"><label for="motionSel">動き（VRMA）</label><select id="motionSel"></select></p>
+    <button class="btn primary" id="motionGo" type="button">再生する</button>
+  </div>
+  <p id="noMotion" class="note">動きのファイル（.vrma）がありません。VroidApp の common/motions/ か &lt;キャラクター&gt;/motions/ に入れて、フォルダを選び直してください。</p>
 </dialog>
 
 <div id="status"></div>
@@ -138,7 +147,8 @@
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
-  "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.1.0/lib/three-vrm.module.js"
+  "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.1.0/lib/three-vrm.module.js",
+  "@pixiv/three-vrm-animation": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-animation@3.1.0/lib/three-vrm-animation.module.js"
 } }
 </script>
 <script type="module" src="js/main.js"></script>

@@ -36,6 +36,7 @@ export async function buildPack(files) {
   const rootName = dropRoot ? [...roots][0] : 'character';
   const charDirs = flat ? [''] : [...new Set(paths.filter((p) => p.includes('/')).map((p) => p.split('/')[0]))].filter((d) => d !== COMMON);
 
+  const commonMotions = flat ? [] : motionsIn(COMMON + '/motions/');
   const chars = [];
   for (const dir of charDirs.sort()) {
     const pre = dir ? dir + '/' : '';
@@ -56,11 +57,19 @@ export async function buildPack(files) {
       outfits = vrms.map((p) => { const n = p.split('/').pop().replace(/\.vrm$/i, ''); return { id: n, name: n, path: p }; });
     }
     if (!outfits.length) continue;   // VRM のないフォルダは飛ばす
-    chars.push({ id, dir: pre, name: conf.name || id, outfits, pose: conf.pose || null });
+    // 動き：common/motions/ と、そのキャラクターの motions/（同じ名前ならキャラクターの方を使う）
+    const motions = new Map([...commonMotions, ...motionsIn(pre + 'motions/')]);
+    chars.push({ id, dir: pre, name: conf.name || id, outfits, pose: conf.pose || null, motions });
   }
 
   const total = files.reduce((s, f) => s + f.blob.size, 0);
   return { chars, byPath, total, count: files.length };
+
+  // 名前（拡張子なし）→ 道すじ
+  function motionsIn(dirPrefix) {
+    return paths.filter((p) => p.startsWith(dirPrefix) && /\.vrma$/i.test(p) && !p.slice(dirPrefix.length).includes('/'))
+      .map((p) => [p.slice(dirPrefix.length).replace(/\.vrma$/i, ''), p]);
+  }
 }
 
 // 今月に合う衣装（どれにも当たらなければ先頭）

@@ -7,6 +7,7 @@ import { createMotion, headHit } from './motion.js';
 import { setPoseOverrides } from './pose.js';
 import { buildPack, outfitForToday } from './pack.js';
 import { loadSavedPack, savePack, loadSavedModel, saveModel, deleteSaved } from './store.js';
+import { loadVRMA } from './vrma.js';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -94,7 +95,7 @@ async function loadArrayBuffer(ab, name) {
   VRMUtils.rotateVRM0(vrm);
   vrm.scene.traverse((o) => { o.frustumCulled = false; });   // 体の一部が消えるのを防ぐ
   scene.add(vrm.scene);
-  motion = createMotion(vrm, camera);   // 姿勢・しぐさ・表情・目線
+  motion = createMotion(vrm, camera, { getMotion });   // 姿勢・しぐさ・表情・目線・VRMA
 
   motion.update(0);
   vrm.scene.updateMatrixWorld(true);
@@ -117,6 +118,18 @@ const PREF_KEY = 'vroid-app-pick';   // 前に選んだキャラクター・衣�
 const loadPref = () => { try { return JSON.parse(localStorage.getItem(PREF_KEY) || 'null'); } catch (_) { return null; } };
 const savePref = (p) => { try { localStorage.setItem(PREF_KEY, JSON.stringify(p)); } catch (_) {} };
 
+// 動き（VRMA）：今のキャラクターの motions/ と common/motions/ から名前で探す。読んだものは覚えておく
+const motionCache = new Map();
+function currentChar() { return pack && current ? pack.chars.find((c) => c.id === current.charId) : null; }
+async function getMotion(name) {
+  const ch = currentChar();
+  const path = ch && ch.motions.get(name);
+  if (!path) return null;
+  if (!motionCache.has(path)) motionCache.set(path, loadVRMA(pack.byPath.get(path)));
+  try { return await motionCache.get(path); }
+  catch (err) { motionCache.delete(path); flash('動きを読めませんでした：' + name + '（' + errText(err) + '）', true); return null; }
+}
+
 // キャラクター・衣装を決めて表示する（指定がなければ、前に選んだもの → 今月の衣装 → 先頭）
 async function showFromPack(charId, outfitId) {
   const pref = loadPref() || {};
@@ -133,6 +146,7 @@ async function usePack(entries, { save }) {
   const next = await buildPack(entries);
   if (!next.chars.length) throw new Error('VRM が見つかりませんでした（<キャラクター>/models/ に .vrm を置いてください）');
   pack = next;
+  motionCache.clear();
   await showFromPack();
   if (save) {
     setStatus('保存しています…（' + fmtMB(pack.total) + '）');
@@ -167,7 +181,20 @@ $('pick').addEventListener('click', () => {
   for (const c of pack.chars) $('charSel').add(new Option(c.name, c.id));
   if (current) $('charSel').value = current.charId;
   fillOutfits();
+  // 動きを試す：今表示しているキャラクターで使える VRMA の一覧
+  const ch = currentChar();
+  const names = ch ? [...ch.motions.keys()].sort() : [];
+  $('motionSel').innerHTML = '';
+  for (const n of names) $('motionSel').add(new Option(n, n));
+  $('motionBox').hidden = !names.length;
+  $('noMotion').hidden = !!names.length;
   $('pickDlg').showModal();
+});
+$('motionGo').addEventListener('click', async () => {
+  const name = $('motionSel').value;
+  $('pickDlg').close();
+  if (!motion || !name) return;
+  if (!(await motion.playMotion(name))) flash('動きが見つかりませんでした：' + name, true);
 });
 $('charSel').addEventListener('change', fillOutfits);
 $('pickGo').addEventListener('click', async () => {

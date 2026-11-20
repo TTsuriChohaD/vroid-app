@@ -144,11 +144,13 @@ function curlHand(B, side, g) {
 }
 
 // 待機：手のひらの中心をお腹の前へ（右手が手前に重なる）。肩を少しすぼめる
-function clasp(B, breath) {
+// blendShoulders：VRMA が肩を動かすとき、肩を混ぜてから腕を解く（解いたあとに肩が動くと重ねた手がずれるため）
+function clasp(B, breath, blendShoulders) {
   const hips = B('hips'); if (!hips) return;
   const sR = B('rightShoulder'), sL = B('leftShoulder');
   if (sR) sR.rotation.set(0, CLASP.shoulderFwd, -CLASP.shoulderUp);
   if (sL) sL.rotation.set(0, -CLASP.shoulderFwd, CLASP.shoulderUp);
+  if (blendShoulders) blendShoulders();
   hips.updateWorldMatrix(true, true);
   const H = new THREE.Vector3(); hips.getWorldPosition(H);
   const thumb = V3(...CLASP.thumb).normalize(), elbow = V3(...CLASP.elbow);
@@ -185,36 +187,35 @@ function wavePose() {
 }
 
 // ---------- 毎フレームの姿勢 ----------
-// s：{ lookW, lookP, waveW, patW, patT, headCur }（motion.js が渡す）
+// s：{ lookW, lookP, waveW, patW, patT, animW }（motion.js が渡す。animW＝VRMA を混ぜている重み）
+// 背骨・首・頭は、今の角度（VRMA の角度、なければ元の姿勢）に小さな回転を「足し込む」。腕は IK で決める
+const _q = new THREE.Quaternion(), _e = new THREE.Euler();
 export function applyPose(vrm, t, s) {
   const B = (n) => vrm.humanoid.getNormalizedBoneNode(n);
-  const set = (n, r) => { const b = B(n); if (b) b.rotation.set(r[0], r[1], r[2]); };
+  const add = (b, x, y, z) => { if (b) b.quaternion.multiply(_q.setFromEuler(_e.set(x, y, z))); };
   const breath = Math.sin(t * BREATH.speed);
+  const stance = 1 - (s.animW || 0);   // 待機の構え（うつむき・かしげ）は、VRMA の間は控える
 
   // 体：呼吸とゆらぎ
-  set('spine', [breath * BREATH.spine, 0, Math.sin(t * 0.7) * BREATH.sway]);
-  const chest = B('chest') || B('upperChest'); if (chest) chest.rotation.set(breath * BREATH.chest, 0, 0);
+  add(B('spine'), breath * BREATH.spine, 0, Math.sin(t * 0.7) * BREATH.sway);
+  add(B('chest') || B('upperChest'), breath * BREATH.chest, 0, 0);
 
   // 腕：お腹の前で手を重ねる
   for (const side of ['left', 'right']) {
     for (const part of ['UpperArm', 'LowerArm', 'Hand']) { const b = B(side + part); if (b) b.quaternion.identity(); }
   }
-  clasp(B, breath);
+  clasp(B, breath, s.blendShoulders);
 
   // 首と頭：少しうつむき・かしげる。見回す
   const lookYaw = s.lookW * LOOK.yaw * Math.sin(s.lookP * Math.PI * 2);
   const lookPitch = s.lookW * LOOK.pitch;
-  const h = CLASP.head;
-  set('neck', [h[0] * 0.5 + lookPitch, h[1] * 0.5 + Math.sin(t * 0.5) * 0.03 + lookYaw * 0.5, h[2] * 0.5]);
-  set('head', [h[0] * 0.5 + lookPitch, h[1] * 0.5 + lookYaw * 0.5, h[2] * 0.5]);
+  const h = CLASP.head.map((v) => v * stance);
+  add(B('neck'), h[0] * 0.5 + lookPitch, h[1] * 0.5 + Math.sin(t * 0.5) * 0.03 + lookYaw * 0.5, h[2] * 0.5);
+  add(B('head'), h[0] * 0.5 + lookPitch, h[1] * 0.5 + lookYaw * 0.5, h[2] * 0.5);
 
-  // なでられているとき：首を少しかしげ、小さくうなずく
+  // なでられているとき（VRMA がないとき）：首を少しかしげ、小さくうなずく
   if (s.patW > 0) {
-    const hb = B('head');
-    if (hb) {
-      hb.rotation.z += PAT.tilt * s.patW;
-      hb.rotation.x += s.patW * (PAT.nod + PAT.nodAmp * Math.sin(s.patT * PAT.nodSpeed));
-    }
+    add(B('head'), s.patW * (PAT.nod + PAT.nodAmp * Math.sin(s.patT * PAT.nodSpeed)), 0, PAT.tilt * s.patW);
   }
 
   // 手を振る：重ねた右手を離してから、手のひらを向けて手首で振る
