@@ -6,11 +6,14 @@
 
 # 素材（VRM・音声・セリフ）は docs/ に置いてしまっても入れない
 *.vrm
+*.vrma
 *.wav
 *.mp3
 *.ogg
 lines.json
 index.json
+character.json
+touch.json
 
 # OS・エディタ
 Thumbs.db

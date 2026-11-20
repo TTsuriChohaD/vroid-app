@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>フォルダ選びの試し</title>
+<style>
+  :root { --bg: #eef3f8; --fg: #1f2a36; --sub: #5a6878; --line: #b9c7d6; --card: #ffffff; --accent: #3b7bd8; --ok: #1e8449; --ng: #c0392b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161c24; --fg: #e8eef5; --sub: #9aa9ba; --line: #3d4a5c; --card: #222b37; --accent: #6aa3f0; --ok: #58d68d; --ng: #ff7a6b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+         font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans JP", sans-serif; line-height: 1.6; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { margin: 0 0 12px; color: var(--sub); font-size: 14px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin: 0 0 14px; }
+  h2 { font-size: 16px; margin: 0 0 8px; }
+  .btn { display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border-radius: 22px;
+         background: var(--accent); color: #fff; font-size: 15px; cursor: pointer; }
+  input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  .res { margin-top: 10px; font-size: 14px; white-space: pre-wrap; word-break: break-all; }
+  .ok { color: var(--ok); } .ng { color: var(--ng); }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<h1>フォルダ選びの試し</h1>
+<p>スマホの中のフォルダを選べるかを試すページです。選んだファイルは名前と大きさを表示するだけで、読み込みも保存も送信もしません。</p>
+
+<section>
+  <h2>この Chrome でできること</h2>
+  <div class="res" id="support"></div>
+</section>
+
+<section>
+  <h2>A. フォルダごと選ぶ</h2>
+  <p>中にフォルダがあるフォルダ（例：VroidApp）を選んでください。</p>
+  <label class="btn" for="dirInput">フォルダを選ぶ</label>
+  <input id="dirInput" type="file" webkitdirectory multiple>
+  <div class="res" id="dirRes"></div>
+</section>
+
+<section>
+  <h2>B. ファイルをまとめて選ぶ</h2>
+  <p>1 つのフォルダの中で、ファイルを長押しして複数選んでください。</p>
+  <label class="btn" for="multiInput">ファイルを選ぶ</label>
+  <input id="multiInput" type="file" multiple>
+  <div class="res" id="multiRes"></div>
+</section>
+
+<p><a href="./">VRM ビューアに戻る</a></p>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const probe = document.createElement('input');
+  const lines = [
+    ['フォルダを選ぶ指定（webkitdirectory）', 'webkitdirectory' in probe],
+    ['フォルダを開く画面（showDirectoryPicker）', typeof window.showDirectoryPicker === 'function'],
+  ];
+  $('support').innerHTML = lines.map(([k, v]) =>
+    `${k}：<span class="${v ? 'ok' : 'ng'}">${v ? 'あり' : 'なし'}</span>`).join('\n') +
+    `\n画面：${innerWidth}×${innerHeight}`;
+
+  const mb = (n) => (n / 1048576).toFixed(2) + ' MB';
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  function show(input, out) {
+    const files = Array.from(input.files || []);
+    if (!files.length) { out.innerHTML = '<span class="ng">ファイルが届きませんでした（0 個）</span>'; return; }
+    const total = files.reduce((s, f) => s + f.size, 0);
+    const withPath = files.filter((f) => f.webkitRelativePath).length;
+    const head = `<span class="ok">${files.length} 個のファイルが届きました</span>（合計 ${mb(total)}、フォルダの道すじつき ${withPath} 個）`;
+    const list = files.slice(0, 60).map((f) => `・${esc(f.webkitRelativePath || f.name)}（${mb(f.size)}）`).join('\n');
+    out.innerHTML = head + '\n' + list + (files.length > 60 ? `\n…ほか ${files.length - 60} 個` : '');
+  }
+  $('dirInput').addEventListener('change', (e) => show(e.target, $('dirRes')));
+  $('multiInput').addEventListener('change', (e) => show(e.target, $('multiRes')));
+</script>
+</body>
+</html>
