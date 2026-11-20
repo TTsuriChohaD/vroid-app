@@ -53,6 +53,21 @@ export const PAT = {
   happy: 0.9,     // うれしそうに目を細める
 };
 
+// ---------- キャラクターごとの数値（character.json の "pose"）で上書きする ----------
+// 例：{ "CLASP": { "curl": 0.2, "head": [0.06, 0, 0.03] } }。書いていない数値は標準の値のまま
+const TABLES = { CLASP, BREATH, LOOK, WAVE, PAT };
+const DEFAULTS = JSON.parse(JSON.stringify(TABLES));
+export function setPoseOverrides(over) {
+  for (const [name, table] of Object.entries(TABLES)) {
+    Object.assign(table, JSON.parse(JSON.stringify(DEFAULTS[name])));   // まず標準に戻す
+    const o = over && over[name];
+    if (o && typeof o === 'object') {
+      for (const [k, v] of Object.entries(o)) if (k in table) table[k] = v;
+    }
+  }
+  applyPose.wave = null;   // 手を振る姿勢を作り直す
+}
+
 // ---------- 道具 ----------
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
 export const smooth01 = (x) => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); };

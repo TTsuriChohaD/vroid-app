@@ -48,7 +48,13 @@
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn:active { transform: scale(0.97); }
   .btn[hidden] { display: none; }
-  #file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  #file, #folder { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  #intro .small { margin: 14px 0 0; font-size: 14px; }
+  .link { color: var(--accent); text-decoration: underline; cursor: pointer; }
+  .field { display: flex; flex-direction: column; gap: 4px; margin: 0 0 12px; }
+  .field label { color: var(--sub); font-size: 14px; }
+  select { min-height: 44px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px;
+           background: var(--btn); color: var(--fg); font: inherit; font-size: 16px; }
 
   #status {
     position: fixed; left: 50%; bottom: max(16px, env(safe-area-inset-bottom));
@@ -78,7 +84,7 @@
   dialog ul { padding-left: 1.2em; margin: 0 0 12px; }
   dialog .row { display: flex; gap: 8px; flex-wrap: wrap; }
   dialog .row form { margin: 0; }
-  #savedInfo { margin: 0 0 12px; color: var(--sub); font-size: 14px; }
+  #savedInfo { margin: 0 0 12px; color: var(--sub); font-size: 14px; white-space: pre-line; }
   #savedInfo:empty { display: none; }
 </style>
 </head>
@@ -86,17 +92,30 @@
 <canvas id="stage"></canvas>
 
 <div class="bar">
-  <label class="btn primary" for="file">VRM を選ぶ</label>
+  <label class="btn primary" for="folder" id="folderBtn">フォルダ</label>
+  <input id="folder" type="file" webkitdirectory multiple>
   <input id="file" type="file">
+  <button class="btn" id="pick" type="button" hidden>切替</button>
   <button class="btn" id="view" type="button" hidden>顔に寄る</button>
   <button class="btn" id="about" type="button">？</button>
 </div>
 
 <div id="intro" hidden>
   <h1>VRM ビューア</h1>
-  <p>スマホの中の VRM ファイルを選ぶと、キャラクターを表示します。<br>ファイルはこの端末の中だけで読み込み、どこにも送りません。<br>一度選ぶと、次からは自動で表示します。</p>
-  <label class="btn primary" for="file">VRM を選ぶ</label>
+  <p>スマホの中の VroidApp フォルダを選ぶと、キャラクターを表示します。<br>ファイルはこの端末の中だけで読み込み、どこにも送りません。<br>一度選ぶと、次からは自動で表示します。</p>
+  <label class="btn primary" for="folder">フォルダを選ぶ</label>
+  <p class="small"><label class="link" for="file">VRM ファイルを 1 つだけ選ぶ</label></p>
 </div>
+
+<dialog id="pickDlg">
+  <h2>キャラクターと衣装</h2>
+  <p class="field"><label for="charSel">キャラクター</label><select id="charSel"></select></p>
+  <p class="field"><label for="outfitSel">衣装</label><select id="outfitSel"></select></p>
+  <div class="row">
+    <button class="btn primary" id="pickGo" type="button">表示する</button>
+    <form method="dialog"><button class="btn">やめる</button></form>
+  </div>
+</dialog>
 
 <div id="status"></div>
 
@@ -105,12 +124,13 @@
   <ul>
     <li>1 本指で回す、2 本指で寄る・引く・ずらす。2 回タップで最初の見え方に戻ります</li>
     <li>選んだファイルはこの端末の中で読むだけで、外には送りません</li>
-    <li>選んだ VRM は、この端末の Chrome の中に保存し、次に開いたときに自動で表示します。空きが少ないときなどに Chrome が消すことがあります。そのときはもう一度選んでください</li>
+    <li>選んだフォルダ（または VRM）は、この端末の Chrome の中に保存し、次に開いたときに自動で表示します。空きが少ないときなどに Chrome が消すことがあります。そのときはもう一度選んでください</li>
+    <li>セリフや衣装を足したときは、「フォルダ」でもう一度選び直すと入れ替わります</li>
     <li>表示に three.js と three-vrm（どちらも MIT ライセンス）を使っています</li>
   </ul>
   <p id="savedInfo"></p>
   <div class="row">
-    <button class="btn" id="forget" type="button" hidden>保存した VRM を消す</button>
+    <button class="btn" id="forget" type="button" hidden>保存したものを消す</button>
     <form method="dialog"><button class="btn">閉じる</button></form>
   </div>
 </dialog>

@@ -4,7 +4,9 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import { createMotion, headHit } from './motion.js';
-import { loadSavedModel, saveModel, deleteSavedModel } from './store.js';
+import { setPoseOverrides } from './pose.js';
+import { buildPack, outfitForToday } from './pack.js';
+import { loadSavedPack, savePack, loadSavedModel, saveModel, deleteSaved } from './store.js';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -117,60 +119,139 @@ async function loadArrayBuffer(ab, name) {
   setStatus('');
 }
 
+const errText = (err) => (err && err.message ? err.message : String(err));
+const flash = (text, isErr) => { setStatus(text, isErr); setTimeout(() => { if (statusEl.textContent === text) setStatus(''); }, 5000); };
+
+// ---------- フォルダ（VroidApp）：キャラクターと衣装 ----------
+let pack = null;      // buildPack の結果
+let current = null;   // { charId, outfitId }
+const PREF_KEY = 'vroid-app-pick';   // 前に選んだキャラクター・衣装（この端末だけの覚え書き）
+const loadPref = () => { try { return JSON.parse(localStorage.getItem(PREF_KEY) || 'null'); } catch (_) { return null; } };
+const savePref = (p) => { try { localStorage.setItem(PREF_KEY, JSON.stringify(p)); } catch (_) {} };
+
+// キャラクター・衣装を決めて表示する（指定がなければ、前に選んだもの → 今月の衣装 → 先頭）
+async function showFromPack(charId, outfitId) {
+  const pref = loadPref() || {};
+  const ch = pack.chars.find((c) => c.id === (charId || pref.charId)) || pack.chars[0];
+  const of = ch.outfits.find((o) => o.id === (outfitId || (ch.id === pref.charId ? pref.outfitId : null))) || outfitForToday(ch);
+  setPoseOverrides(ch.pose);
+  await loadArrayBuffer(await pack.byPath.get(of.path).arrayBuffer(), ch.name + '・' + of.name);
+  current = { charId: ch.id, outfitId: of.id };
+  savePref(current);
+  $('pick').hidden = false;
+}
+
+async function usePack(entries, { save }) {
+  const next = await buildPack(entries);
+  if (!next.chars.length) throw new Error('VRM が見つかりませんでした（<キャラクター>/models/ に .vrm を置いてください）');
+  pack = next;
+  await showFromPack();
+  if (save) {
+    setStatus('保存しています…（' + fmtMB(pack.total) + '）');
+    await savePack(entries);
+    flash('保存しました。次からは自動で表示します');
+  }
+}
+
+$('folder').addEventListener('change', async (e) => {
+  const files = Array.from(e.target.files || []);
+  e.target.value = '';
+  if (!files.length) return;
+  const entries = files.map((f) => ({ path: f.webkitRelativePath || f.name, blob: f }));
+  try {
+    await usePack(entries, { save: true });
+  } catch (err) {
+    console.error(err);
+    setStatus('読み込めませんでした：' + errText(err), true);
+  }
+});
+
+// 切替：キャラクターと衣装を選ぶ
+function fillOutfits() {
+  const ch = pack.chars.find((c) => c.id === $('charSel').value) || pack.chars[0];
+  $('outfitSel').innerHTML = '';
+  for (const o of ch.outfits) $('outfitSel').add(new Option(o.name, o.id));
+  if (current && current.charId === ch.id) $('outfitSel').value = current.outfitId;
+}
+$('pick').addEventListener('click', () => {
+  if (!pack) return;
+  $('charSel').innerHTML = '';
+  for (const c of pack.chars) $('charSel').add(new Option(c.name, c.id));
+  if (current) $('charSel').value = current.charId;
+  fillOutfits();
+  $('pickDlg').showModal();
+});
+$('charSel').addEventListener('change', fillOutfits);
+$('pickGo').addEventListener('click', async () => {
+  $('pickDlg').close();
+  try { await showFromPack($('charSel').value, $('outfitSel').value); }
+  catch (err) { console.error(err); setStatus('読み込めませんでした：' + errText(err), true); }
+});
+
+// ---------- VRM を 1 つだけ選ぶ（試し用） ----------
 $('file').addEventListener('change', async (e) => {
   const file = e.target.files && e.target.files[0];
   e.target.value = '';   // 同じファイルをもう一度選べるように
   if (!file) return;
   try {
+    setPoseOverrides(null);
     await loadArrayBuffer(await file.arrayBuffer(), file.name);
   } catch (err) {
     console.error(err);
-    setStatus('読み込めませんでした：' + (err && err.message ? err.message : err), true);
+    setStatus('読み込めませんでした：' + errText(err), true);
     return;
   }
-  // 表示できたものだけ保存する（次に開いたとき自動で表示）
-  try {
-    await saveModel(file);
-  } catch (err) {
-    console.warn(err);
-    setStatus('表示はできましたが、保存できませんでした（次も選んでください）', true);
-    setTimeout(() => setStatus(''), 5000);
-  }
+  // 表示できたものだけ保存する。フォルダを保存していればそちらが優先されるので、VRM だけのときに使う
+  try { if (!pack) await saveModel(file); }
+  catch (err) { console.warn(err); flash('表示はできましたが、保存できませんでした（次も選んでください）', true); }
 });
 
-// ---------- このページについて（保存した VRM の確認・消す） ----------
-const fmtMB = (n) => (n / 1048576).toFixed(1) + ' MB';
+// ---------- このページについて（保存したものの確認・消す） ----------
+function fmtMB(n) { return (n / 1048576).toFixed(1) + ' MB'; }
 $('about').addEventListener('click', async () => {
-  const rec = await loadSavedModel();
-  $('savedInfo').textContent = rec ? '保存している VRM：' + rec.name + '（' + fmtMB(rec.size) + '）' : '保存している VRM はありません';
-  $('forget').hidden = !rec;
+  const p = await loadSavedPack(), m = p ? null : await loadSavedModel();
+  let info = '保存しているものはありません';
+  if (p) {
+    const total = p.files.reduce((s, f) => s + f.size, 0);
+    const names = pack ? pack.chars.map((c) => c.name + '（衣装 ' + c.outfits.length + '）').join('、') : '';
+    info = '保存しているフォルダ：' + p.files.length + ' ファイル（' + fmtMB(total) + '）' + (names ? '\nキャラクター：' + names : '');
+  } else if (m) {
+    info = '保存している VRM：' + m.name + '（' + fmtMB(m.size) + '）';
+  }
+  $('savedInfo').textContent = info;
+  $('forget').hidden = !(p || m);
   $('aboutDlg').showModal();
 });
 $('forget').addEventListener('click', async () => {
   try {
-    await deleteSavedModel();
-    $('savedInfo').textContent = '保存した VRM を消しました（表示中のキャラクターは、ページを閉じるまで残ります）';
+    await deleteSaved();
+    $('savedInfo').textContent = '保存したものを消しました（表示中のキャラクターは、ページを閉じるまで残ります）';
     $('forget').hidden = true;
   } catch (err) {
-    $('savedInfo').textContent = '消せませんでした：' + (err && err.message ? err.message : err);
+    $('savedInfo').textContent = '消せませんでした：' + errText(err);
   }
 });
 
-// ---------- 開いたとき：保存した VRM があれば自動で表示 ----------
+// ---------- 開いたとき：保存したフォルダ（なければ VRM）があれば自動で表示 ----------
 (async () => {
-  const rec = await loadSavedModel();
-  if (!rec) { $('intro').hidden = false; return; }
   try {
-    await loadArrayBuffer(await rec.blob.arrayBuffer(), rec.name);
+    const p = await loadSavedPack();
+    if (p) { await usePack(p.files, { save: false }); return; }
+    const m = await loadSavedModel();
+    if (m) { await loadArrayBuffer(await m.blob.arrayBuffer(), m.name); return; }
+    $('intro').hidden = false;
   } catch (err) {
     console.error(err);
     $('intro').hidden = false;
-    setStatus('保存した VRM を読めませんでした。もう一度選んでください', true);
+    setStatus('保存したものを読めませんでした。もう一度フォルダを選んでください', true);
   }
 })();
 
-// PC での確かめ用（内蔵ブラウザからモデルを渡す）
-window.vroidApp = { loadArrayBuffer, frameView, camera, controls, get motion() { return motion; } };
+// PC での確かめ用（内蔵ブラウザからモデルやフォルダを渡す）
+window.vroidApp = {
+  loadArrayBuffer, frameView, camera, controls, usePack,
+  get motion() { return motion; }, get pack() { return pack; }, get current() { return current; },
+};
 
 // ---------- 描画のくり返し ----------
 const clock = new THREE.Clock();
