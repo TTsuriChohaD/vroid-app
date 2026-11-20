@@ -76,5 +76,5 @@ export function createPlayer(vrm) {
       finished: !cur.loop && cur.t >= cur.dur };
   }
 
-  return { play, stop, update, get playing() { return cur ? cur.name : null; } };
+  return { play, stop, update, get playing() { return cur ? cur.name : null; }, get duration() { return cur ? cur.dur : 0; } };
 }

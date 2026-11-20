@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
-import { createMotion, headHit } from './motion.js';
+import { createMotion } from './motion.js';
+import { setupTouch, DEFAULT_TOUCH, EMOTIONS } from './touch.js';
 import { setPoseOverrides } from './pose.js';
 import { buildPack, outfitForToday } from './pack.js';
 import { loadSavedPack, savePack, loadSavedModel, saveModel, deleteSaved } from './store.js';
@@ -58,21 +59,33 @@ function frameView() {
   controls.update();
 }
 
-// タップ：頭に当たればなでる。それ以外の 2 回タップ（ダブルクリック）で最初の見え方に戻す
-// 指を置いてほとんど動かさずに離したときだけ（回す操作と区別する）
-let lastTap = 0, tapStart = null;
-canvas.addEventListener('pointerdown', (e) => {
-  tapStart = e.isPrimary ? { x: e.clientX, y: e.clientY, t: performance.now() } : null;
-});
-canvas.addEventListener('pointerup', (e) => {
-  const s = tapStart; tapStart = null;
-  if (!s || Math.hypot(e.clientX - s.x, e.clientY - s.y) > 10 || performance.now() - s.t > 500) return;
-  if (vrm && motion && headHit(vrm, camera, canvas, e.clientX, e.clientY)) { motion.pat(); lastTap = 0; return; }
-  if (e.pointerType === 'mouse') return;   // マウスは dblclick で
-  const now = performance.now();
-  if (now - lastTap < 300) { frameView(); lastTap = 0; } else lastTap = now;
-});
-canvas.addEventListener('dblclick', (e) => { if (!(vrm && headHit(vrm, camera, canvas, e.clientX, e.clientY))) frameView(); });
+// ---------- タッチ（touch.js）：部位としぐさ → touch.json（なければ標準）の反応 ----------
+// キャラクターの外を 2 回タップすると、最初の見え方に戻す
+const recent = [];   // くり返しを数える { region, at }
+async function onTouch(region, gesture, side) {
+  if (!motion) return;
+  const ch = currentChar();
+  const conf = (ch && ch.touch) || DEFAULT_TOUCH;
+  let r = conf[region] && conf[region][gesture];
+  if (!r && gesture === 'stroke') r = conf[region] && conf[region].tap;
+  // 同じ部位に短い間に何度もふれたら、反応を変える
+  const rep = conf.repeat;
+  const now = performance.now() / 1000;
+  let isRepeat = false;
+  if (rep) {
+    while (recent.length && now - recent[0].at > rep.withinSec) recent.shift();
+    recent.push({ region, at: now });
+    if (recent.filter((x) => x.region === region).length >= rep.count) { r = rep; recent.length = 0; isRepeat = true; }
+  }
+  if (!r) return;
+  if (r.motion && r.motion.includes('{side}')) r = { ...r, motion: r.motion.replace('{side}', side || 'right') };
+  lastTouch = { region, gesture, side, r };
+  // ふだんは、今の動きが終わるまで次を始めない。くり返しの反応だけは、終わるのを待ってから出す（最大 4 秒）
+  if (isRepeat) for (let i = 0; i < 40 && motion.busy; i++) await new Promise((res) => setTimeout(res, 100));
+  await motion.react(r);
+}
+let lastTouch = null;
+setupTouch({ canvas, camera, controls, getVrm: () => vrm, onTouch, onEmptyDoubleTap: frameView });
 
 // ---------- 読み込み ----------
 let vrm = null, motion = null;
@@ -95,7 +108,8 @@ async function loadArrayBuffer(ab, name) {
   VRMUtils.rotateVRM0(vrm);
   vrm.scene.traverse((o) => { o.frustumCulled = false; });   // 体の一部が消えるのを防ぐ
   scene.add(vrm.scene);
-  motion = createMotion(vrm, camera, { getMotion });   // 姿勢・しぐさ・表情・目線・VRMA
+  const ch = currentCharFor || null;
+  motion = createMotion(vrm, camera, { getMotion, emotions: { ...EMOTIONS, ...((ch && ch.expressions) || {}) } });   // 姿勢・しぐさ・表情・目線・VRMA
 
   motion.update(0);
   vrm.scene.updateMatrixWorld(true);
@@ -113,6 +127,7 @@ const flash = (text, isErr) => { setStatus(text, isErr); setTimeout(() => { if (
 
 // ---------- フォルダ（VroidApp）：キャラクターと衣装 ----------
 let pack = null;      // buildPack の結果
+let currentCharFor = null;
 let current = null;   // { charId, outfitId }
 const PREF_KEY = 'vroid-app-pick';   // 前に選んだキャラクター・衣装（この端末だけの覚え書き）
 const loadPref = () => { try { return JSON.parse(localStorage.getItem(PREF_KEY) || 'null'); } catch (_) { return null; } };
@@ -136,6 +151,7 @@ async function showFromPack(charId, outfitId) {
   const ch = pack.chars.find((c) => c.id === (charId || pref.charId)) || pack.chars[0];
   const of = ch.outfits.find((o) => o.id === (outfitId || (ch.id === pref.charId ? pref.outfitId : null))) || outfitForToday(ch);
   setPoseOverrides(ch.pose);
+  currentCharFor = ch;   // 読み込むモデルのキャラクター（表情の組み合わせを渡すため）
   await loadArrayBuffer(await pack.byPath.get(of.path).arrayBuffer(), ch.name + '・' + of.name);
   current = { charId: ch.id, outfitId: of.id };
   savePref(current);
@@ -214,6 +230,7 @@ $('file').addEventListener('change', async (e) => {
   if (!file) return;
   try {
     setPoseOverrides(null);
+    currentCharFor = null;
     await loadArrayBuffer(await file.arrayBuffer(), file.name);
   } catch (err) {
     console.error(err);
@@ -289,6 +306,7 @@ async function loadFromPC() {
 window.vroidApp = {
   loadArrayBuffer, frameView, camera, controls, usePack,
   get motion() { return motion; }, get pack() { return pack; }, get current() { return current; }, get vrm() { return vrm; },
+  get lastTouch() { return lastTouch; }, onTouch,
 };
 
 // ---------- 描画のくり返し ----------

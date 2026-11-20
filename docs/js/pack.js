@@ -13,7 +13,9 @@
 // { "name": "ライトブルー",
 //   "outfits": [ { "id": "winter", "name": "冬", "file": "winter.vrm", "months": [11, 12, 1, 2] },
 //                { "id": "hoodie", "name": "パーカー", "file": "hoodie.vrm" } ],
-//   "pose": { "CLASP": { "curl": 0.2 } } }
+//   "pose": { "CLASP": { "curl": 0.2 } },
+//   "expressions": { "shy": { "relaxed": 0.5, "happy": 0.2 } } }   ← 表情の組み合わせ（touch.js の EMOTIONS を上書き・追加）
+// touch.json の書き方は touch.js の DEFAULT_TOUCH と同じ
 // character.json がなければ、models/ の .vrm を全部、衣装として並べる。
 
 const COMMON = 'common';
@@ -59,7 +61,15 @@ export async function buildPack(files) {
     if (!outfits.length) continue;   // VRM のないフォルダは飛ばす
     // 動き：common/motions/ と、そのキャラクターの motions/（同じ名前ならキャラクターの方を使う）
     const motions = new Map([...commonMotions, ...motionsIn(pre + 'motions/')]);
-    chars.push({ id, dir: pre, name: conf.name || id, outfits, pose: conf.pose || null, motions });
+    // タッチの設定（なければページの標準）
+    let touch = null;
+    const touchBlob = byPath.get(pre + 'touch.json');
+    if (touchBlob) {
+      try { touch = JSON.parse(await touchBlob.text()); }
+      catch (e) { throw new Error(id + '/touch.json の書き方に誤りがあります（' + e.message + '）'); }
+    }
+    chars.push({ id, dir: pre, name: conf.name || id, outfits, pose: conf.pose || null, motions, touch,
+      expressions: conf.expressions || null });   // 表情の組み合わせ（例 { "shy": { "Blush": 1, "relaxed": 0.3 } }）
   }
 
   const total = files.reduce((s, f) => s + f.blob.size, 0);

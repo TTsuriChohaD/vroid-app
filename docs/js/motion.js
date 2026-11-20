@@ -27,14 +27,22 @@ const REPLACE = /(Shoulder|UpperArm|LowerArm|Hand|Thumb|Index|Middle|Ring|Little
 
 const lerpK = (k, dt) => 1 - Math.pow(1 - k, dt * 60);   // 1/60 秒あたり k ずつ近づく
 
+// 目線のずらし方（カメラの位置から、m）
+const LOOK_AT = { away: [0.7, -0.15], down: [0.1, -0.6] };
+
 // getMotion(name)：その名前の VRMA（VRMAnimation）を返す。なければ null
-export function createMotion(vrm, camera, { getMotion = async () => null } = {}) {
+// emotions：表情の組み合わせ { 名前: { 表情名: 重み } }（touch.js の EMOTIONS ＋ character.json の "expressions"）
+export function createMotion(vrm, camera, { getMotion = async () => null, emotions = {} } = {}) {
   let t = 0;
   let idleType = null, idleStart = 0, idleW = 0, idleP = 0;
   let nextIdleAt = IDLE.firstAt;
   let patAt = -99, patByVRMA = false;
-  let happy = 0;
+  let emo = null;            // 今の感情の表情 { weights: {表情名: 重み}, until, fadeSec }
+  const face = {};           // 表情名 → 今の重み（なめらかに動かす）
+  let lookAway = null;       // { dir: [x, y], until }
   let nextBlink = 2, blinkStart = -1;
+  const em = vrm.expressionManager;
+  const hasExpr = (n) => !!(em && em.getExpression(n));
   const look = [0, 0];
   const lookTarget = new THREE.Object3D();
   if (vrm.lookAt) vrm.lookAt.target = lookTarget;
@@ -118,19 +126,30 @@ export function createMotion(vrm, camera, { getMotion = async () => null } = {})
     // 5. 腕・指は、コードの姿勢から VRMA へ切り替える（肩は腕を解く前に混ぜてある）
     if (a) for (const [b, q] of snap) if (REPLACE.test(b) && !isShoulder(b)) node(b).quaternion.slerp(q, a.w);
 
-    // 6. 表情：手を振る間と、なでられたときにっこり（VRMA に表情が入っていれば、そちらに任せる）
-    const em = vrm.expressionManager;
+    // 6. 表情：手を振る間はにっこり、感情の表情（タッチ・セリフ）は決めた時間だけ。VRMA に表情が入っていれば、そちらに任せる
     const vrmaFace = a && a.hasExpr && a.w > 0.5;
     if (em && !vrmaFace) {
-      const target = Math.max(WAVE.happy * waveW, PAT.happy * pw);
-      happy += (target - happy) * lerpK(0.1, dt);
-      em.setValue('happy', happy);
-      em.setValue('blink', blinkValue() * (1 - Math.min(1, happy * 1.5)));   // にっこり中はまばたきしない
+      const target = {};
+      const put = (n, w) => { if (hasExpr(n)) target[n] = Math.max(target[n] || 0, w); };
+      put('happy', WAVE.happy * waveW);
+      if (!patByVRMA && pw > 0 && !emo) put('happy', PAT.happy * pw);   // VRMA がないときの、なでられた表情
+      if (emo && t < emo.until) for (const [n, w] of Object.entries(emo.weights)) put(n, w);
+      // fadeSec でおよそ 95% まで移る速さ（感情の表情がないときは前と同じ速さ）
+      const k = lerpK(emo ? 1 - Math.pow(0.05, 1 / (60 * Math.max(0.05, emo.fadeSec))) : 0.1, dt);
+      for (const n of new Set([...Object.keys(face), ...Object.keys(target)])) {
+        face[n] = (face[n] || 0) + ((target[n] || 0) - (face[n] || 0)) * k;
+        em.setValue(n, face[n]);
+      }
+      if (emo && t >= emo.until + emo.fadeSec * 2) emo = null;
+      // 目を細める表情の間はまばたきしない（モデルに overrideBlink があれば three-vrm がそちらも守る）
+      const eyesClosed = Math.max(face.happy || 0, (face.relaxed || 0) * 0.8);
+      em.setValue('blink', blinkValue() * (1 - Math.min(1, eyesClosed * 1.5)));
     }
 
-    // 目線：ふだんはこちら（カメラ）。見回す間は横へ。VRMA に目線が入っていれば、そちらに任せる
+    // 目線：ふだんはこちら（カメラ）。見回す間は横へ、照れたときはそらす・伏せる。VRMA に目線が入っていれば、そちらに任せる
     if (vrm.lookAt) vrm.lookAt.target = a && a.hasLookAt && a.w > 0.5 ? null : lookTarget;
-    const lx = lookW * LOOK.eyesX * Math.sin(idleP * Math.PI * 2), ly = lookW * LOOK.eyesY;
+    const away = lookAway && t < lookAway.until ? lookAway.dir : [0, 0];
+    const lx = lookW * LOOK.eyesX * Math.sin(idleP * Math.PI * 2) + away[0], ly = lookW * LOOK.eyesY + away[1];
     look[0] += (lx - look[0]) * lerpK(0.12, dt);
     look[1] += (ly - look[1]) * lerpK(0.12, dt);
     lookTarget.position.copy(camera.position).add(new THREE.Vector3(look[0], look[1], 0));
@@ -148,14 +167,40 @@ export function createMotion(vrm, camera, { getMotion = async () => null } = {})
     return true;
   }
 
-  // 頭がタップされた：大きな動き（VRMA）があればそれを、なければコードの動き。表情はコードでにっこり
-  async function pat() {
-    if (t - patAt < 1.5) return;
-    patAt = t;
-    patByVRMA = await playMotion(PAT_MOTION);
+  // 感情の表情を出す。spec：EMOTIONS の名前（"shy"）／{ name, weight, fadeSec }／{ 表情名: 重み }
+  function setEmotion(spec, holdSec = 2.5) {
+    if (!spec) return;
+    let weights, fadeSec = 0.3;
+    if (typeof spec === 'string') weights = emotions[spec] || { [spec]: 1 };
+    else if (spec.name) { weights = Object.fromEntries(Object.entries(emotions[spec.name] || { [spec.name]: 1 }).map(([n, w]) => [n, w * (spec.weight ?? 1)])); fadeSec = spec.fadeSec ?? fadeSec; }
+    else weights = spec;
+    emo = { weights, until: t + holdSec, fadeSec };
   }
 
-  return { update, pat, startIdle, playMotion, stopMotion: () => player.stop(), get playing() { return player.playing; } };
+  // 反応する（タッチ・セリフから）。r：{ motion, expression, look, holdSec }
+  // 今の動き（VRMA・手を振る）が終わるまでは、次を始めない（false を返す）
+  async function react(r) {
+    if (player.playing || idleType === 'wave') return false;
+    const m = r.motion || '';
+    let dur = 2.5;
+    if (m === 'code:wave' || m === 'code:look') { startIdle(m.slice(5)); dur = IDLE.dur[m.slice(5)]; }
+    else if (m) {
+      const ok = await playMotion(m);
+      if (!ok && m === PAT_MOTION) { patAt = t; patByVRMA = false; dur = PAT_DUR; }   // pat_happy がなければ前のコードの動き
+      else if (ok) { patByVRMA = true; dur = player.duration || dur; }
+      // ほかの動きが見つからなければ、表情と目線だけ（「8.」の決まり）
+    }
+    const hold = r.holdSec ?? dur;
+    setEmotion(r.expression, hold);
+    if (r.look && LOOK_AT[r.look]) lookAway = { dir: LOOK_AT[r.look], until: t + hold };
+    return true;
+  }
+
+  // 頭がタップされた（前の呼び方。今は react を使う）
+  function pat() { return react({ motion: PAT_MOTION, expression: 'happy' }); }
+
+  return { update, pat, react, setEmotion, startIdle, playMotion, stopMotion: () => player.stop(),
+    get playing() { return player.playing; }, get busy() { return !!player.playing || idleType === 'wave'; } };
 }
 
 // 画面の点 (x, y) が頭に当たっているか（頭の骨を画面に写して判定）
