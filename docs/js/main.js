@@ -44,29 +44,18 @@ resize();
 
 // ---------- カメラの見え方 ----------
 // 頭の骨の高さを基準にする（背丈が変わっても同じ見え方）
+// 最初は全身。寄る・引く・回すは指で（2026-11-20 先生：「顔に寄る」ボタンは要らない）
 let headY = 1.4;
-let closeUp = false;
 function frameView() {
   const tan = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-  if (closeUp) {
-    // 顔から胸まで
-    const h = 0.55, cy = headY - 0.08;
-    const dV = (h / 2) / tan;                       // 縦に収まる距離
-    const dH = (0.42 / 2) / (tan * camera.aspect);  // 顔と髪の横幅 0.42 m が収まる距離
-    controls.target.set(0, cy, 0);
-    camera.position.set(0, cy + 0.02, Math.max(dV, dH));
-  } else {
-    // 全身（縦長の画面でも横幅がはみ出さないように）
-    const h = (headY + 0.2) * 1.22, cy = (headY + 0.2) / 2 + 0.04;   // 上のボタンに髪がかからないよう余白を多めに
-    const dV = (h / 2) / tan;                      // 縦に収まる距離
-    const dH = (0.9 / 2) / (tan * camera.aspect);  // 横幅 0.9 m が収まる距離
-    controls.target.set(0, cy, 0);
-    camera.position.set(0, cy + 0.05, Math.max(dV, dH));
-  }
+  // 全身（縦長の画面でも横幅がはみ出さないように）
+  const h = (headY + 0.2) * 1.22, cy = (headY + 0.2) / 2 + 0.04;   // 上のボタンに髪がかからないよう余白を多めに
+  const dV = (h / 2) / tan;                      // 縦に収まる距離
+  const dH = (0.9 / 2) / (tan * camera.aspect);  // 横幅 0.9 m が収まる距離
+  controls.target.set(0, cy, 0);
+  camera.position.set(0, cy + 0.05, Math.max(dV, dH));
   controls.update();
-  $('view').textContent = closeUp ? '全身' : '顔に寄る';
 }
-$('view').addEventListener('click', () => { closeUp = !closeUp; frameView(); });
 
 // タップ：頭に当たればなでる。それ以外の 2 回タップ（ダブルクリック）で最初の見え方に戻す
 // 指を置いてほとんど動かさずに離したときだけ（回す操作と区別する）
@@ -115,7 +104,6 @@ async function loadArrayBuffer(ab, name) {
   frameView();
 
   $('intro').hidden = true;
-  $('view').hidden = false;
   setStatus('');
 }
 
