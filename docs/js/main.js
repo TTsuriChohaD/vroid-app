@@ -9,6 +9,7 @@ import { setPoseOverrides } from './pose.js';
 import { buildPack, outfitForToday } from './pack.js';
 import { loadSavedPack, savePack, loadSavedModel, saveModel, deleteSaved } from './store.js';
 import { loadVRMA } from './vrma.js';
+import { setupSprings } from './springs.js';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -109,6 +110,7 @@ async function loadArrayBuffer(ab, name) {
   vrm.scene.traverse((o) => { o.frustumCulled = false; });   // 体の一部が消えるのを防ぐ
   scene.add(vrm.scene);
   const ch = currentCharFor || null;
+  setupSprings(vrm, ch && ch.springs);   // 揺れもの（胸・スカート）が腕・手に当たるように。元の姿勢のうちに呼ぶ
   motion = createMotion(vrm, camera, { getMotion, emotions: { ...EMOTIONS, ...((ch && ch.expressions) || {}) } });   // 姿勢・しぐさ・表情・目線・VRMA
 
   motion.update(0);

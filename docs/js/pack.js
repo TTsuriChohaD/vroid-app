@@ -69,7 +69,8 @@ export async function buildPack(files) {
       catch (e) { throw new Error(id + '/touch.json の書き方に誤りがあります（' + e.message + '）'); }
     }
     chars.push({ id, dir: pre, name: conf.name || id, outfits, pose: conf.pose || null, motions, touch,
-      expressions: conf.expressions || null });   // 表情の組み合わせ（例 { "shy": { "Blush": 1, "relaxed": 0.3 } }）
+      expressions: conf.expressions || null,
+      springs: conf.springs || null });   // 揺れものの当たり判定（springs.js の SPRINGS を上書き）   // 表情の組み合わせ（例 { "shy": { "Blush": 1, "relaxed": 0.3 } }）
   }
 
   const total = files.reduce((s, f) => s + f.blob.size, 0);

@@ -55,13 +55,20 @@ export const PAT = {
 
 // 手をひざに置く（前かがみ。2026-11-20 先生）。値はキャラクターの左手側。右手側は X を反転する
 export const KNEES = {
-  palm: [0.0, 0.1, 0.07],    // 手のひらの中心：ひざ（lowerLeg の骨）から 上・前（m）。ひざ頭の少し上
+  // 手は「ひざの上の太もも」に、手のひらを太ももにくっつけて置く（2026-11-21 先生：多少食い込んでもよいので、くっついているほうがいい）。
+  // 太ももの骨の線（ひざ → 脚の付け根）を基準に決める
+  along: 0.1,                // ひざから太ももに沿って上へ（m）。腕がまっすぐになるよう、下の slide の範囲で自動でずらす
+  surface: 0.045,            // 太ももの骨の線から手のひらまで（m）。パープルのひざ上の太さ約 0.047〜0.05 より少し小さく＝少し食い込む
+  inward: 0.015,             // 体の内側へ（m）。両手が内側で軽く重なる（2026-11-21 先生：手が軽く重なるくらい腕は内側に）
+  rightOnTop: 0.02,          // 右手を左手の上に重ねる（右手だけ太ももから少し浮かせる、m。0.012 では平らに置いた指どうしが食い込んだ）
+                             // （前は手のひらの位置をひざから 外 0.03・上 0.1・前 0.06 m で決めていた。手が太ももから浮いて見えた）
   // 腕をまっすぐ伸ばして体を支える（2026-11-20 先生）：手を置く所を太ももに沿って上下にずらし、肩からの距離を腕の長さに合わせる
   straight: 0.998,           // 腕の伸ばし具合（1＝伸びきる）。0.998 で肘の曲がりは約 7 度（0.985 でも約 20 度曲がって見えた）
   slide: [-0.12, 0.15],      // ずらしてよい範囲（m、- でひざの下へ、+ で太ももの上へ）。体を回すと片方の肩がひざに近づくので、下へ広めに
-  thumb: [-1, 0.3, 0.4],     // 左手の親指の向き（体の内側・少し上・前）
   elbow: [-0.9, 0.0, 0.3],   // 肘を逃がす向き（右腕の値。外・少し前）
-  curl: 0.3,                 // 指を軽く曲げて、ひざを包む
+  fingerIn: 0.35,            // 指先を少し内向きに（0＝ひざの方へまっすぐ）
+  forearmTwist: 0.75,        // 手のひらを返すねじれのうち、前腕が受け持つ割合（残りは手首）。手首だけだと細くなった
+  curl: 0.12,                // 指の曲げ。手のひらを平らに置くので浅く（ひざを包んでいたときは 0.3）
   pull: 0.15,                // 重ねた手を離す長さ（手を置く時間のうちの割合。手を離しながら、すぐにひざへ伸ばす）
 };
 // 手をひざに置く動き（VRMA の名前 → 時刻、秒）：手を離し始め・置き終わり・ひざから離し始め・重ね終わり
@@ -69,7 +76,7 @@ export const HAND_MOTIONS = {
   // 手首の向きが大きく変わるので、ゆっくりめに（短いと手首がくるっと速く回った）
   // 動きは 12.3 秒（かがむ 1.1・揺れながら保つ 10・戻る 1.2）。手は体と同時に伸ばし、かがみ終わる少し前にひざに着く。
   // 起き上がるときは、体と同時にひざから離す（2026-11-20 先生：前は手が体より遅れていた）
-  lean_forward: { pose: 'knees', times: [0.0, 0.95, 11.1, 12.2] },
+  lean_forward: { pose: 'knees', times: [0.0, 0.95, 11.1, 12.3] },
 };
 
 // ---------- キャラクターごとの数値（character.json の "pose"）で上書きする ----------
@@ -191,6 +198,15 @@ export const pullPart = (w) => smooth01(w / OUT);
 export const actPart = (w) => smooth01((w - OUT) / (1 - OUT));
 
 // 両手をひざに置く（w：0 重ねたまま → 1 置いた）。前半で重ねた手を離し、後半でひざへ。脚・背骨は VRMA が先に決めてある
+// 回転 q のうち、軸 axis まわりのねじれだけを取り出し、その k 倍の回転を返す（ねじれと曲げに分ける）
+function twistAbout(q, axis, k) {
+  const p = V3(q.x, q.y, q.z).projectOnVector(axis);
+  const t = new THREE.Quaternion(p.x, p.y, p.z, q.w);
+  if (t.lengthSq() < 1e-9) return new THREE.Quaternion();
+  t.normalize();
+  return new THREE.Quaternion().slerp(t, k);
+}
+
 // 体を支えるために手を伸ばす動きなので、手を離すのはごく短く、すぐにひざへ向かう（2026-11-20 先生：腕が遅れている）
 function placeOnKnees(B, root, w) {
   const pw = smooth01(w / KNEES.pull), aw = smooth01(w);
@@ -202,21 +218,41 @@ function placeOnKnees(B, root, w) {
     if (aw <= 0) continue;
     knee.updateWorldMatrix(true, false);
     const K = new THREE.Vector3(); knee.getWorldPosition(K);
-    const base = K.clone().add(V3(KNEES.palm[0] * m, KNEES.palm[1], KNEES.palm[2]).applyQuaternion(rq));
-    // 腕がまっすぐになる所を、太ももに沿って探す（肩から手のひらまでの距離＝腕の長さ×straight）
     const ua = B(side + 'UpperArm'), la = B(side + 'LowerArm'), hd = B(side + 'Hand'), thighB = B(side + 'UpperLeg');
     const S = new THREE.Vector3(); ua.getWorldPosition(S);
+    // 太ももの向き：up＝ひざから脚の付け根へ、n＝太ももの前の面（手を置く面）、lat＝体の外側
     const up = thighB.getWorldPosition(new THREE.Vector3()).sub(K).normalize();
-    const reach = (la.position.length() + hd.position.length()) * KNEES.straight + PALM.along;
-    const at = (s) => base.clone().add(up.clone().multiplyScalar(s));
+    const n = V3(0, 0, 1).applyQuaternion(rq).projectOnPlane(up).normalize();
+    const lat = V3(m, 0, 0).applyQuaternion(rq).projectOnPlane(up).projectOnPlane(n).normalize();
+    const base = K.clone().add(up.clone().multiplyScalar(KNEES.along))
+      .add(n.clone().multiplyScalar(KNEES.surface + (side === 'right' ? KNEES.rightOnTop : 0)))
+      .add(lat.clone().multiplyScalar(-KNEES.inward));
+    // 手のひらを太ももに平らに置く（2026-11-21 先生：そのほうが腕が体に寄って自然）：
+    // 指先は太ももに沿ってひざの方へ（少し内向き）、手のひらは太ももの面へ。手首は腕に対して少し反る
+    // （手の骨の決まり：右手は指先 -X・親指 +Z・手のひら -Y、左手は X が逆）
+    const d = up.clone().negate().add(lat.clone().multiplyScalar(-KNEES.fingerIn)).projectOnPlane(n).normalize();
+    const X = side === 'right' ? d.clone().negate() : d.clone(), Y = n.clone(), Z = X.clone().cross(Y);
+    const handW = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Z));
+    const palmOff = V3(side === 'right' ? -PALM.along : PALM.along, -PALM.down, 0).applyQuaternion(handW);   // 手首 → 手のひらの中心
+    // 腕がまっすぐになる所を、太ももに沿って探す（肩から手首までの距離＝腕の長さ×straight）
+    const reach = (la.position.length() + hd.position.length()) * KNEES.straight;
+    const at = (s) => base.clone().add(up.clone().multiplyScalar(s)).sub(palmOff);   // 手首の位置
     let [lo, hi] = KNEES.slide;   // 上へずらすほど肩に近づく
     if (at(lo).distanceTo(S) <= reach) hi = lo;        // ひざの下でも届く（体が起きている途中など）→ 肘は少し曲がる
     else if (at(hi).distanceTo(S) >= reach) lo = hi;   // 太ももの上でも届かない → 届く所まで手を伸ばす
     else for (let i = 0; i < 12; i++) { const mid = (lo + hi) / 2; if (at(mid).distanceTo(S) > reach) lo = mid; else hi = mid; }
-    const want = at((lo + hi) / 2);
-    const thumb = V3(KNEES.thumb[0] * m, KNEES.thumb[1], KNEES.thumb[2]).applyQuaternion(rq).normalize();
-    // 手首は腕より少し遅れて向きを変える（遅らせすぎると、終わりの方で手首がくるっと速く回った）
-    reachPalm(B, side, want, aw, thumb, V3(...KNEES.elbow), smooth01((aw - 0.1) / 0.9));
+    const keep = hd.quaternion.clone();   // 重ねた手の向き（ここから置いた向きへ移る）
+    armIK(B, side, at((lo + hi) / 2), aw, null, V3(...KNEES.elbow), 0);
+    la.updateWorldMatrix(true, false);
+    const handLocal = la.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(handW);
+    const hw = smooth01((aw - 0.1) / 0.9);   // 手首は腕より少し遅れて向きを変える（遅らせすぎると、終わりの方で手首がくるっと速く回った）
+    // 手のひらを返すねじれ（約 110 度）を手首だけで受けると、皮ふがしぼられて手首が細くなる（2026-11-21 先生）。
+    // 本物の腕と同じく、ねじれの大部分を前腕（ひじ〜手首）に受け持たせる。手首の向きは変わらない
+    // 先に手首の向きを混ぜてから（手の見た目の動きは前と同じ）、そのねじれの一部を前腕へ移す
+    const blended = keep.clone().slerp(handLocal, hw);
+    const tw = twistAbout(blended, V3(1, 0, 0), KNEES.forearmTwist * hw);   // 前腕の骨の長さの向き＝X
+    la.quaternion.multiply(tw);
+    hd.quaternion.copy(tw.invert().multiply(blended));
   }
   return aw;
 }
