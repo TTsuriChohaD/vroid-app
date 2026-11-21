@@ -129,14 +129,16 @@ export function createMotion(vrm, camera, { getMotion = async () => null, emotio
     const blendShoulders = a ? () => { for (const [b, q] of snap) if (isShoulder(b)) { node(b).quaternion.slerp(q, a.w); node(b).updateMatrixWorld(true); } } : null;
     // 手をひざに置く動き（前かがみ）：VRMA の時刻に合わせて、手を置く重みを決める
     const hm = a && HAND_MOTIONS[a.name];
-    let kneesW = 0;
+    let kneesW = 0, leanWaveW = 0, leanWaveSide = 'right';
     if (hm && hm.pose === 'knees') {
       const [t0, t1, t2, t3] = hm.times, pt = player.clipTime;   // 動きの中の時刻（ポーズで保っている間は止まっている）
       // 直線で渡す（pose.js の側で、手を離す・置く段取りがなめらかにつなぐ。ここでもなめらかにすると途中が速くなりすぎた）
       const lin = (x) => Math.min(1, Math.max(0, x));
       kneesW = Math.min(lin((pt - t0) / (t1 - t0)), 1 - lin((pt - t2) / (t3 - t2)));
+      // ひざに置いた手を挙げて手を振る（再生を始めてからの時間で。ポーズで保っている間も時間は進む）。止めると体と一緒に下ろす
+      if (hm.wave) { leanWaveW = Math.min(lin((player.time - hm.wave.start) / hm.wave.rise), kneesW); leanWaveSide = hm.wave.side; }
     }
-    applyPose(vrm, t, { lookW, lookP: idleP, waveW, patW: patByVRMA ? 0 : pw, patT: t - patAt, animW, blendShoulders, kneesW });
+    applyPose(vrm, t, { lookW, lookP: idleP, waveW, patW: patByVRMA ? 0 : pw, patT: t - patAt, animW, blendShoulders, kneesW, leanWaveW, leanWaveSide });
 
     // 5. 腕・指は、コードの姿勢から VRMA へ切り替える（肩は腕を解く前に混ぜてある）
     if (a) for (const [b, q] of snap) if (REPLACE.test(b) && !isShoulder(b)) node(b).quaternion.slerp(q, a.w);
@@ -212,7 +214,10 @@ export function createMotion(vrm, camera, { getMotion = async () => null, emotio
   // 頭がタップされた（前の呼び方。今は react を使う）
   function pat() { return react({ motion: PAT_MOTION, expression: 'happy' }); }
 
-  return { update, pat, react, setEmotion, startIdle, playMotion, stopMotion: () => player.stop(), releaseMotion: () => player.release(),
+  // 感情の表情を終える（fadeSec かけて戻る）。一覧から選んだ動きを止めたときなど
+  function clearEmotion() { if (emo && emo.until > t) emo.until = t; }
+
+  return { update, pat, react, setEmotion, clearEmotion, startIdle, playMotion, stopMotion: () => player.stop(), releaseMotion: () => player.release(),
     get playing() { return player.playing; }, get mode() { return player.mode; }, get releasing() { return player.releasing; },
     get busy() { return !!player.playing || idleType === 'wave'; } };
 }

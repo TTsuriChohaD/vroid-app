@@ -78,11 +78,24 @@ export const HAND_MOTIONS = {
   // 起き上がるときは、体と同時にひざから離す（2026-11-20 先生：前は手が体より遅れていた）
   // 2026-11-21 ポーズにした：動きの中の時刻で決める（かがみ終わり 1.1 秒で止めて保つ。「止める」で 1.1〜2.3 秒の起き上がりを再生）
   lean_forward: { pose: 'knees', times: [0.0, 0.95, 1.1, 2.3] },
+  // 前かがみのまま右手を挙げて手を振る（2026-11-21 先生）。両手をひざに置いたあと、wave.start 秒（再生を始めてからの時間）から
+  // wave.rise 秒かけて右手を挙げる。止めると、体が起き上がるのに合わせて手を下ろす
+  lean_wave: { pose: 'knees', times: [0.0, 0.95, 1.1, 2.3], wave: { side: 'right', start: 1.3, rise: 1.2 } },   // rise 0.7 では手が速く回った
+};
+
+// 前かがみのまま手を振る（lean_wave）：手のひらの中心を顔の横へ（頭の骨から、キャラの外・上・前。m、世界の向き）。
+// 指先は上、手のひらはこちら（カメラの方＝+Z）。手首で左右に振る。体が倒れていても世界の向きで決めるので、手はまっすぐ上を向く
+export const LEAN_WAVE = {
+  palm: [0.2, 0.0, 0.1],      // 振っていないときの手のひらの中心：頭の骨から 外・上・前（外は右手なら -X）
+  elbow: [-0.6, -0.8, 0.1],   // 肘を逃がす向き（右腕の値。下・外）
+  tilt: 0.25,                 // 手のひらを少し内へ向ける（顔の方へ）
+  wrist: 0.32, wristSpeed: 8, // 手首で振る大きさ・速さ（ふだんの手を振ると同じくらい）
+  armSway: 0.015,             // 手首も一緒に少し左右に動かす（m。前腕ごと揺れる感じ）
 };
 
 // ---------- キャラクターごとの数値（character.json の "pose"）で上書きする ----------
 // 例：{ "CLASP": { "curl": 0.2, "head": [0.06, 0, 0.03] } }。書いていない数値は標準の値のまま
-const TABLES = { CLASP, BREATH, LOOK, WAVE, PAT, KNEES, HAND_MOTIONS };
+const TABLES = { CLASP, BREATH, LOOK, WAVE, PAT, KNEES, HAND_MOTIONS, LEAN_WAVE };
 const DEFAULTS = JSON.parse(JSON.stringify(TABLES));
 export function setPoseOverrides(over) {
   for (const [name, table] of Object.entries(TABLES)) {
@@ -258,6 +271,47 @@ function placeOnKnees(B, root, w) {
   return aw;
 }
 
+// 前かがみのまま手を振る（数値は上の LEAN_WAVE）
+function leanWave(B, root, w, t, side) {
+  const ua = B(side + 'UpperArm'), la = B(side + 'LowerArm'), hd = B(side + 'Hand'), head = B('head');
+  if (!ua || !la || !hd || !head) return 0;
+  const m = side === 'right' ? -1 : 1;   // 外の向き（右手は -X）
+  const rq = new THREE.Quaternion(); root.getWorldQuaternion(rq);
+  head.updateWorldMatrix(true, false);
+  const Hp = head.getWorldPosition(new THREE.Vector3());
+  const palmC = Hp.add(V3(LEAN_WAVE.palm[0] * m, LEAN_WAVE.palm[1], LEAN_WAVE.palm[2]).applyQuaternion(rq));
+  // 手の向き：指先＝上、手のひら＝前（こちら）を少し内へ
+  const up = V3(0, 1, 0).applyQuaternion(rq);
+  const palmDir = V3(-m * LEAN_WAVE.tilt, 0, 1).normalize().applyQuaternion(rq);   // 手のひらが向く方向
+  const fingers0 = up.clone().projectOnPlane(palmDir).normalize();
+  // 手の骨の決まり：右手は指先 -X・親指 +Z・手のひら -Y、左手は X が逆
+  const basis = (f) => {
+    const X = side === 'right' ? f.clone().negate() : f.clone(), Y = palmDir.clone().negate(), Z = X.clone().cross(Y);
+    return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Z));
+  };
+  // 手首の位置は、振っていない手の向きで決めて動かさない（手首が支点。指先が左右に大きく動く）。
+  // 前は手のひらの中心を止めて回していたので、指先がほとんど動かず手首が揺れて見えた（2026-11-21 先生）
+  const palmOff0 = V3(side === 'right' ? -PALM.along : PALM.along, -PALM.down, 0).applyQuaternion(basis(fingers0));
+  const phase = Math.sin(t * LEAN_WAVE.wristSpeed);
+  const sway = palmDir.clone().cross(fingers0).normalize();   // 指先が振れる向き（手首も同じ向きに少し動かす＝前腕ごと揺れる）
+  const wristT = palmC.sub(palmOff0).add(sway.multiplyScalar(LEAN_WAVE.armSway * phase));
+  // 手首で左右に振る（手のひらの向きの軸で回す）
+  const swing = new THREE.Quaternion().setFromAxisAngle(palmDir, LEAN_WAVE.wrist * phase);
+  const handW = basis(fingers0.clone().applyQuaternion(swing));
+  const aw = smooth01(w);
+  const keep = hd.quaternion.clone();
+  armIK(B, side, wristT, aw, null, V3(...LEAN_WAVE.elbow), 0);
+  la.updateWorldMatrix(true, false);
+  const handLocal = la.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(handW);
+  // 手の向きは腕と同じ速さで変える（遅らせると、ひざの手のひら → こちら向きの大きな返しが短い間に集まり、1 コマ 10 度回った）
+  const hw = aw;
+  const blended = keep.clone().slerp(handLocal, hw);
+  const tw = twistAbout(blended, V3(1, 0, 0), KNEES.forearmTwist * hw);   // ねじれは前腕に（手首が細くならないように）
+  la.quaternion.multiply(tw);
+  hd.quaternion.copy(tw.invert().multiply(blended));
+  return aw;
+}
+
 // 手を振る姿勢（右腕の上腕・前腕の回転）。数値の表 WAVE から作る
 function wavePose() {
   const ua = new THREE.Quaternion().setFromEuler(new THREE.Euler(...WAVE.upperArm, 'XYZ'));
@@ -326,6 +380,9 @@ export function applyPose(vrm, t, s) {
       }
     }
   }
+
+  // 前かがみのまま、ひざの手を挙げて手を振る（lean_wave。2026-11-21 先生）
+  if (s.leanWaveW > 0) waveAct = Math.max(waveAct, leanWave(B, vrm.scene, s.leanWaveW, t, s.leanWaveSide || 'right'));
 
   // 指：ふだんはほとんど伸ばす。手を振るときは開く
   const curl = CLASP.curl + (KNEES.curl - CLASP.curl) * kneeAct;

@@ -8,7 +8,7 @@ import { setupTouch, DEFAULT_TOUCH, EMOTIONS } from './touch.js';
 import { setPoseOverrides } from './pose.js';
 import { buildPack, outfitForToday } from './pack.js';
 import { loadSavedPack, savePack, loadSavedModel, saveModel, deleteSaved } from './store.js';
-import { loadVRMA } from './vrma.js';
+import { loadVRMA, classifyVRMA } from './vrma.js';
 import { setupSprings } from './springs.js';
 
 const $ = (id) => document.getElementById(id);
@@ -166,6 +166,8 @@ async function usePack(entries, { save }) {
   if (!next.chars.length) throw new Error('VRM が見つかりませんでした（<キャラクター>/models/ に .vrm を置いてください）');
   pack = next;
   motionCache.clear();
+  seenMode.clear();
+  classifying = classifyAll(next);   // 動きの種類を先に調べておく（一覧を開いたときに分けて出せるように）
   await showFromPack();
   if (save) {
     setStatus('保存しています…（' + fmtMB(pack.total) + '）');
@@ -226,7 +228,16 @@ function fillPick() {
 // ---------- 動き：一覧から選んで再生、「止める」で待機に戻る（2026-11-21 先生） ----------
 // 種類（motions.json の type。なければ自動で決め、一度再生したら覚える）：once 1 回／loop 繰り返し／pose ポーズ
 const MODE_LABEL = { pose: 'ポーズ', loop: '繰り返し', once: '一連の動き' };
-const seenMode = new Map();   // 自動で決まった種類（名前 → mode）
+const seenMode = new Map();   // 自動で決まった種類（道すじ → mode）。ファイルの中身から先に調べる（classifyAll）
+let classifying = null;
+async function classifyAll(p) {
+  const paths = new Set();
+  for (const c of p.chars) for (const path of c.motions.values()) paths.add(path);
+  for (const path of paths) {
+    const mode = await classifyVRMA(p.byPath.get(path));
+    if (mode && pack === p) seenMode.set(path, mode);
+  }
+}
 let menuMotion = null;        // 一覧から再生している動きの名前（止めるボタンを出す）
 // 触ったときの反応に使う動き（自動で再生するので一覧に出さない）
 function touchMotionNames(ch) {
@@ -241,7 +252,7 @@ function motionItems(ch) {
   const hide = touchMotionNames(ch), conf = ch.motionConf || {};
   return [...ch.motions.keys()]
     .filter((n) => !(conf[n] && conf[n].menu === false) && !(hide.has(n) && !(conf[n] && conf[n].menu === true)))
-    .map((n) => ({ id: n, label: (conf[n] && conf[n].name) || n, mode: (conf[n] && conf[n].type) || seenMode.get(n) || null }))
+    .map((n) => ({ id: n, label: (conf[n] && conf[n].name) || n, mode: (conf[n] && conf[n].type) || seenMode.get(ch.motions.get(n)) || null }))
     .sort((a, b) => a.label.localeCompare(b.label, 'ja'));
 }
 $('motionBtn').addEventListener('click', () => {
@@ -250,6 +261,8 @@ $('motionBtn').addEventListener('click', () => {
   // 一覧から選んだ動きの間は ■：押すと止める
   if ($('motionBtn').classList.contains('playing')) { if (motion) motion.releaseMotion(); return; }
   togglePanel('motionDlg', () => fillMotionList(ch));
+  // 種類を調べ終わっていなければ、終わったら並べ直す
+  if (classifying && $('motionDlg').open) classifying.then(() => { if ($('motionDlg').open) fillMotionList(ch); });
 });
 function fillMotionList(ch) {
   const list = $('motionList');
@@ -273,7 +286,7 @@ function fillMotionList(ch) {
     }
   }
 }
-let menuLabel = '';
+let menuLabel = '', menuExpr = false;
 async function startMotion(id, label) {
   if (!motion) return;
   if (id === 'code:wave' || id === 'code:look') { motion.startIdle(id.slice(5)); return; }
@@ -287,13 +300,17 @@ async function startMotion(id, label) {
   }
   const mode = await motion.playMotion(id, { mode: c.type || 'auto', holdAt: c.holdAt, fade: c.fade });
   if (!mode) { flash('動きが見つかりませんでした：' + id, true); return; }
-  if (!c.type && typeof mode === 'string') seenMode.set(id, mode);
+  if (!c.type && typeof mode === 'string') seenMode.set(currentChar().motions.get(id), mode);
+  // 動きの間の表情（motions.json の expression。例 { "ou": 0.7 }＝口を「う」、"happy"）。止めると戻す
+  if (c.expression) motion.setEmotion(c.expression, Infinity);
+  menuExpr = !!c.expression;
   menuMotion = id;
   menuLabel = label + (typeof mode === 'string' ? '（' + MODE_LABEL[mode] + '）' : '');
 }
 // 「動き」のボタンは、一覧から再生した動きが続いている間だけ ■（止める）にする（止め始めたら ▶ に戻す）
 function updateStopButton() {
   const show = !!(motion && menuMotion && motion.playing === menuMotion && !motion.releasing);
+  if (!show && menuExpr && motion) { motion.clearEmotion(); menuExpr = false; }   // 止め始めたら表情も戻す
   if (!show && menuMotion && !(motion && motion.playing === menuMotion)) menuMotion = null;
   const b = $('motionBtn');
   if (b.classList.contains('playing') !== show) {

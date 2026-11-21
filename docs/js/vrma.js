@@ -15,6 +15,41 @@ export async function loadVRMA(blob) {
   return anim;
 }
 
+// 動きの種類を、ファイルの中身だけから決める（再生しなくても一覧で分けられるように。2026-11-21 先生：スマホで、
+// 一度動かすまで種類が分からなかった）。決め方は再生のときの自動と同じ：長さ 0 → pose、始めと終わりが同じで 4 秒以下 → loop、ほか → once
+export async function classifyVRMA(blob) {
+  try {
+    const buf = await blob.arrayBuffer(), dv = new DataView(buf);
+    if (dv.getUint32(0, true) !== 0x46546C67) return null;
+    const jl = dv.getUint32(12, true);
+    const json = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 20, jl)));
+    const binStart = 20 + jl + 8;
+    const n = { SCALAR: 1, VEC3: 3, VEC4: 4 };
+    // 数値の並びの「最初」と「最後」だけ読む
+    const read = (i, k) => {
+      const a = json.accessors[i], bv = json.bufferViews[a.bufferView], c = n[a.type];
+      if (a.componentType !== 5126) return null;   // 小数（float）以外は読まない
+      const stride = bv.byteStride || c * 4, off = binStart + (bv.byteOffset || 0) + (a.byteOffset || 0) + k * stride;
+      return Array.from({ length: c }, (_, j) => dv.getFloat32(off + j * 4, true));
+    };
+    const anim = json.animations && json.animations[0];
+    if (!anim) return null;
+    const hips = json.extensions?.VRMC_vrm_animation?.humanoid?.humanBones?.hips?.node;
+    let dur = 0, diff = 0;
+    for (const ch of anim.channels) {
+      const s = anim.samplers[ch.sampler], inA = json.accessors[s.input], cnt = inA.count;
+      dur = Math.max(dur, inA.max ? inA.max[0] : read(s.input, cnt - 1)[0]);
+      if (ch.target.path !== 'rotation' && !(ch.target.path === 'translation' && ch.target.node === hips)) continue;
+      const a = read(s.output, 0), b = read(s.output, cnt - 1);
+      if (!a || !b) continue;
+      if (a.length === 4) diff = Math.max(diff, 2 * Math.acos(Math.min(1, Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]))));
+      else diff = Math.max(diff, Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) * 10);
+    }
+    if (dur < 0.05) return 'pose';
+    return diff < 0.1 && dur <= 4 ? 'loop' : 'once';
+  } catch (_) { return null; }
+}
+
 export const FADE_SEC = 0.4;   // 始め・終わりに、コードの姿勢と混ぜる時間（0.3 → 0.4、2026-11-20 終わりの「カクッ」を和らげる）
 export const POSE_FADE_SEC = 1.0;   // 長さ 0 秒のポーズに入る・戻る時間（0.4 では脚が 1 コマ 18 度動いた。2026-11-21）
 
