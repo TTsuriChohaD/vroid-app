@@ -86,7 +86,35 @@
   dialog .row form { margin: 0; }
   dialog h2.sub { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--line); }
   dialog .note { color: var(--sub); font-size: 14px; margin: 0; }
-  #motionBox[hidden], #noMotion[hidden] { display: none; }
+  #noMotion[hidden] { display: none; }
+  /* アイコンのボタン */
+  .icon {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 44px; height: 44px; padding: 0;
+    border: 1px solid var(--line); border-radius: 50%;
+    background: var(--btn); color: var(--btn-fg); cursor: pointer;
+    backdrop-filter: blur(6px);
+  }
+  .icon.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .icon:active { transform: scale(0.94); }
+  .icon[hidden] { display: none; }
+  .icon svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  svg .fill { fill: currentColor; stroke: none; }
+  /* 動きのボタン：再生中は ■ にして目立たせる */
+  #motionBtn .when-playing { display: none; }
+  #motionBtn.playing { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #motionBtn.playing .when-idle { display: none; }
+  #motionBtn.playing .when-playing { display: block; }
+  /* 開いているボタン（もう一度押すと閉じる） */
+  .icon[aria-expanded="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* 上のボタンで開く画面：ボタンの下に出し、ボタンは押せるままにする（modal にしない） */
+  dialog.panel { position: fixed; top: calc(max(10px, env(safe-area-inset-top)) + 54px); left: 0; right: 0; margin: 0 auto;
+                 max-height: calc(100vh - 90px); overflow: auto; z-index: 10; box-shadow: 0 6px 24px #0003; }
+  /* 動きの一覧 */
+  #motionList h3 { font-size: 14px; color: var(--sub); margin: 12px 0 6px; font-weight: normal; }
+  #motionList h3:first-child { margin-top: 0; }
+  #motionList .items { display: flex; flex-wrap: wrap; gap: 8px; }
+  #motionList .btn { font-size: 14px; min-height: 40px; padding: 0 14px; }
   #savedInfo { margin: 0 0 12px; color: var(--sub); font-size: 14px; white-space: pre-line; }
   #savedInfo:empty { display: none; }
 </style>
@@ -94,12 +122,24 @@
 <body>
 <canvas id="stage"></canvas>
 
+<!-- 上のボタン（アイコン。2026-11-21 先生：モデルと動きを分け、アイコンですっきり） -->
 <div class="bar">
-  <label class="btn primary" for="folder" id="folderBtn">フォルダ</label>
+  <label class="icon primary" for="folder" id="folderBtn" title="フォルダを選ぶ" aria-label="フォルダを選ぶ">
+    <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+  </label>
   <input id="folder" type="file" webkitdirectory multiple>
   <input id="file" type="file">
-  <button class="btn" id="pick" type="button" hidden>切替</button>
-  <button class="btn" id="about" type="button">？</button>
+  <button class="icon" id="pick" type="button" hidden title="キャラクターと衣装" aria-label="キャラクターと衣装">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="7.5" r="3.5"/><path d="M5 20c0-3.9 3.1-7 7-7s7 3.1 7 7"/></svg>
+  </button>
+  <!-- 動き：ふだんは ▶（一覧を開く）。一覧から選んだ動きの間は ■（止める）に変わる（2026-11-21 先生） -->
+  <button class="icon" id="motionBtn" type="button" hidden title="動き" aria-label="動き">
+    <svg viewBox="0 0 24 24" class="when-idle"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5z" class="fill"/></svg>
+    <svg viewBox="0 0 24 24" class="when-playing"><circle cx="12" cy="12" r="9"/><rect x="8.5" y="8.5" width="7" height="7" rx="1" class="fill"/></svg>
+  </button>
+  <button class="icon" id="about" type="button" title="このページについて" aria-label="このページについて">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 1 1 3.4 2.4c-.6.3-1 .8-1 1.5v.6"/><circle cx="12" cy="16.8" r=".6" class="fill"/></svg>
+  </button>
 </div>
 
 <div id="intro" hidden>
@@ -109,7 +149,7 @@
   <p class="small"><label class="link" for="file">VRM ファイルを 1 つだけ選ぶ</label></p>
 </div>
 
-<dialog id="pickDlg">
+<dialog id="pickDlg" class="panel">
   <h2>キャラクターと衣装</h2>
   <p class="field"><label for="charSel">キャラクター</label><select id="charSel"></select></p>
   <p class="field"><label for="outfitSel">衣装</label><select id="outfitSel"></select></p>
@@ -117,19 +157,22 @@
     <button class="btn primary" id="pickGo" type="button">表示する</button>
     <form method="dialog"><button class="btn">やめる</button></form>
   </div>
-  <h2 class="sub">動きを試す</h2>
-  <div id="motionBox">
-    <p class="field"><label for="motionSel">動き</label><select id="motionSel"></select></p>
-    <button class="btn primary" id="motionGo" type="button">再生する</button>
-  </div>
-  <p id="noMotion" class="note">動きのファイル（.vrma）はまだありません。VroidApp の common/motions/ か &lt;キャラクター&gt;/motions/ に入れて、フォルダを選び直してください。</p>
+</dialog>
+
+<dialog id="motionDlg" class="panel">
+  <h2>動き</h2>
+  <div id="motionList"></div>
+  <p id="noMotion" class="note" hidden>動きのファイル（.vrma）はまだありません。VroidApp の common/motions/ か &lt;キャラクター&gt;/motions/ に入れて、フォルダを選び直してください。</p>
+  <div class="row"><form method="dialog"><button class="btn">閉じる</button></form></div>
 </dialog>
 
 <div id="status"></div>
 
-<dialog id="aboutDlg">
+<dialog id="aboutDlg" class="panel">
   <h2>このページについて</h2>
   <ul>
+    <li>上のボタン：フォルダ（VroidApp を選ぶ）・人（キャラクターと衣装）・▶（動き）・？（このページ）。開いた画面は、同じボタンをもう一度押すと閉じます</li>
+    <li>動きは一覧から選ぶと始まります。動いている間は ▶ が ■ に変わり、押すと待機に戻ります。繰り返しの動きは止めるまで続き、ポーズは止めるまでその姿勢のままです</li>
     <li>キャラクターの外から 1 本指で回す、2 本指で寄る・引く・ずらす。キャラクターの外を 2 回タップで最初の見え方に戻ります</li>
     <li>頭を指でなでる・タップすると喜びます。ほお・手・肩などにふれても反応します</li>
     <li>選んだファイルはこの端末の中で読むだけで、外には送りません</li>

@@ -14,6 +14,7 @@ lines.json
 index.json
 character.json
 touch.json
+motions.json
 
 # OS・エディタ
 Thumbs.db

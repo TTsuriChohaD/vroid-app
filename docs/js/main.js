@@ -158,6 +158,7 @@ async function showFromPack(charId, outfitId) {
   current = { charId: ch.id, outfitId: of.id };
   savePref(current);
   $('pick').hidden = false;
+  $('motionBtn').hidden = false;
 }
 
 async function usePack(entries, { save }) {
@@ -193,31 +194,114 @@ function fillOutfits() {
   for (const o of ch.outfits) $('outfitSel').add(new Option(o.name, o.id));
   if (current && current.charId === ch.id) $('outfitSel').value = current.outfitId;
 }
+// 上のボタンで開く画面：同じボタンをもう一度押すと閉じる。ほかの画面は閉じる（2026-11-21 先生）
+// 画面は modal にしないので、開いたままでも上のボタンを押せる。キャラクターの所を触っても閉じる
+const PANELS = [['pick', 'pickDlg'], ['motionBtn', 'motionDlg'], ['about', 'aboutDlg']];
+function closePanels(except) {
+  for (const [btn, dlg] of PANELS) if (dlg !== except && $(dlg).open) $(dlg).close();
+}
+function togglePanel(dlg, fill) {
+  if ($(dlg).open) { $(dlg).close(); return; }
+  closePanels(dlg);
+  fill();
+  $(dlg).show();
+}
+for (const [btn, dlg] of PANELS) {
+  $(dlg).addEventListener('close', () => $(btn).setAttribute('aria-expanded', 'false'));
+  new MutationObserver(() => $(btn).setAttribute('aria-expanded', String($(dlg).open))).observe($(dlg), { attributes: true, attributeFilter: ['open'] });
+}
+canvas.addEventListener('pointerdown', () => closePanels(null));
+
 $('pick').addEventListener('click', () => {
   if (!pack) return;
+  togglePanel('pickDlg', fillPick);
+});
+function fillPick() {
   $('charSel').innerHTML = '';
   for (const c of pack.chars) $('charSel').add(new Option(c.name, c.id));
   if (current) $('charSel').value = current.charId;
   fillOutfits();
-  // 動きを試す：今表示しているキャラクターで使える VRMA の一覧
+}
+
+// ---------- 動き：一覧から選んで再生、「止める」で待機に戻る（2026-11-21 先生） ----------
+// 種類（motions.json の type。なければ自動で決め、一度再生したら覚える）：once 1 回／loop 繰り返し／pose ポーズ
+const MODE_LABEL = { pose: 'ポーズ', loop: '繰り返し', once: '一連の動き' };
+const seenMode = new Map();   // 自動で決まった種類（名前 → mode）
+let menuMotion = null;        // 一覧から再生している動きの名前（止めるボタンを出す）
+// 触ったときの反応に使う動き（自動で再生するので一覧に出さない）
+function touchMotionNames(ch) {
+  const conf = (ch && ch.touch) || DEFAULT_TOUCH, names = new Set();
+  const add = (m) => { if (!m || m.startsWith('code:')) return; if (m.includes('{side}')) { names.add(m.replace('{side}', 'left')); names.add(m.replace('{side}', 'right')); } else names.add(m); };
+  for (const [k, v] of Object.entries(conf)) { if (k === 'repeat') add(v.motion); else for (const r of Object.values(v || {})) add(r && r.motion); }
+  return names;
+}
+// PC で確かめるときだけ、コードの動き（ふだんは自動で動く）も並べる
+const CODE_MOTIONS = [['code:wave', '手を振る'], ['code:look', '見回す'], ['code:pat', 'なでる']];
+function motionItems(ch) {
+  const hide = touchMotionNames(ch), conf = ch.motionConf || {};
+  return [...ch.motions.keys()]
+    .filter((n) => !(conf[n] && conf[n].menu === false) && !(hide.has(n) && !(conf[n] && conf[n].menu === true)))
+    .map((n) => ({ id: n, label: (conf[n] && conf[n].name) || n, mode: (conf[n] && conf[n].type) || seenMode.get(n) || null }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'ja'));
+}
+$('motionBtn').addEventListener('click', () => {
   const ch = currentChar();
-  const names = ch ? [...ch.motions.keys()].sort() : [];
-  $('motionSel').innerHTML = '';
-  for (const n of names) $('motionSel').add(new Option(n + '（VRMA）', n));
-  for (const [v, label] of CODE_MOTIONS) $('motionSel').add(new Option(label, v));
-  $('noMotion').hidden = !!names.length;
-  $('pickDlg').showModal();
+  if (!ch) return;
+  // 一覧から選んだ動きの間は ■：押すと止める
+  if ($('motionBtn').classList.contains('playing')) { if (motion) motion.releaseMotion(); return; }
+  togglePanel('motionDlg', () => fillMotionList(ch));
 });
-// コードの動きも試せるように（「code:」で始まる値）
-const CODE_MOTIONS = [['code:wave', '手を振る（コード）'], ['code:look', '見回す（コード）'], ['code:pat', 'なでる（頭のタップと同じ）']];
-$('motionGo').addEventListener('click', async () => {
-  const name = $('motionSel').value;
-  $('pickDlg').close();
-  if (!motion || !name) return;
-  if (name === 'code:wave' || name === 'code:look') { motion.startIdle(name.slice(5)); return; }
-  if (name === 'code:pat') { motion.pat(); return; }
-  if (!(await motion.playMotion(name))) flash('動きが見つかりませんでした：' + name, true);
-});
+function fillMotionList(ch) {
+  const list = $('motionList');
+  list.innerHTML = '';
+  const items = motionItems(ch);
+  const groups = [['pose', 'ポーズ'], ['loop', '繰り返し'], ['once', '一連の動き'], [null, '動き']];
+  for (const [mode, title] of groups) {
+    const g = items.filter((it) => it.mode === mode);
+    if (!g.length) continue;
+    addGroup(title, g.map((it) => [it.id, it.label]));
+  }
+  if (onPC) addGroup('確かめ用（PC だけ。ふだんは自動で動く）', CODE_MOTIONS);
+  $('noMotion').hidden = !!items.length;
+  function addGroup(title, arr) {
+    const h = document.createElement('h3'); h.textContent = title; list.append(h);
+    const box = document.createElement('div'); box.className = 'items'; list.append(box);
+    for (const [id, label] of arr) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'btn'; b.textContent = label;
+      b.addEventListener('click', () => { $('motionDlg').close(); startMotion(id, label); });
+      box.append(b);
+    }
+  }
+}
+let menuLabel = '';
+async function startMotion(id, label) {
+  if (!motion) return;
+  if (id === 'code:wave' || id === 'code:look') { motion.startIdle(id.slice(5)); return; }
+  if (id === 'code:pat') { motion.pat(); return; }
+  const c = (currentChar().motionConf || {})[id] || {};
+  // ほかの動きの途中なら、先にその動きを終えて待機に戻ってから始める（いきなり切り替えると姿勢が跳ぶ）
+  if (motion.playing) {
+    motion.releaseMotion();
+    menuMotion = null;
+    for (let i = 0; i < 80 && motion.playing; i++) await new Promise((r) => setTimeout(r, 50));
+  }
+  const mode = await motion.playMotion(id, { mode: c.type || 'auto', holdAt: c.holdAt, fade: c.fade });
+  if (!mode) { flash('動きが見つかりませんでした：' + id, true); return; }
+  if (!c.type && typeof mode === 'string') seenMode.set(id, mode);
+  menuMotion = id;
+  menuLabel = label + (typeof mode === 'string' ? '（' + MODE_LABEL[mode] + '）' : '');
+}
+// 「動き」のボタンは、一覧から再生した動きが続いている間だけ ■（止める）にする（止め始めたら ▶ に戻す）
+function updateStopButton() {
+  const show = !!(motion && menuMotion && motion.playing === menuMotion && !motion.releasing);
+  if (!show && menuMotion && !(motion && motion.playing === menuMotion)) menuMotion = null;
+  const b = $('motionBtn');
+  if (b.classList.contains('playing') !== show) {
+    b.classList.toggle('playing', show);
+    const t = show ? '止める：' + menuLabel : '動き';
+    b.title = t; b.setAttribute('aria-label', t);
+  }
+}
 $('charSel').addEventListener('change', fillOutfits);
 $('pickGo').addEventListener('click', async () => {
   $('pickDlg').close();
@@ -247,6 +331,7 @@ $('file').addEventListener('change', async (e) => {
 // ---------- このページについて（保存したものの確認・消す） ----------
 function fmtMB(n) { return (n / 1048576).toFixed(1) + ' MB'; }
 $('about').addEventListener('click', async () => {
+  if ($('aboutDlg').open) { $('aboutDlg').close(); return; }
   const p = await loadSavedPack(), m = p ? null : await loadSavedModel();
   let info = '保存しているものはありません';
   if (p) {
@@ -258,7 +343,7 @@ $('about').addEventListener('click', async () => {
   }
   $('savedInfo').textContent = info;
   $('forget').hidden = !(p || m);
-  $('aboutDlg').showModal();
+  togglePanel('aboutDlg', () => {});
 });
 $('forget').addEventListener('click', async () => {
   try {
@@ -317,5 +402,6 @@ renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
   controls.update();
   if (motion) motion.update(dt);   // 姿勢・しぐさ・表情・目線（カメラが動いたあとに）
+  updateStopButton();
   renderer.render(scene, camera);
 });

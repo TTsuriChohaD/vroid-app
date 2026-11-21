@@ -16,6 +16,7 @@ export async function loadVRMA(blob) {
 }
 
 export const FADE_SEC = 0.4;   // 始め・終わりに、コードの姿勢と混ぜる時間（0.3 → 0.4、2026-11-20 終わりの「カクッ」を和らげる）
+export const POSE_FADE_SEC = 1.0;   // 長さ 0 秒のポーズに入る・戻る時間（0.4 では脚が 1 コマ 18 度動いた。2026-11-21）
 
 // VRM 1 体ぶんの再生係
 // three の AnimationMixer は使わず、各トラックの値を自分で読んで骨に書く（2026-11-20）。
@@ -35,9 +36,29 @@ export function createPlayer(vrm) {
     if (node) nodeToBone.set(node.name, name);
   }
 
-  let cur = null;   // { action, bones, hasExpr, hasLookAt, name, t, dur, loop }
+  // 再生のしかた（2026-11-21 先生）：
+  //   once：1 回再生して終わる。止める → その姿勢のまま FADE_SEC で待機に戻る
+  //   loop：止めるまで繰り返す。止める → 今の 1 回を最後まで再生してから戻る（途中で切れない）
+  //   pose：holdAt 秒（なければ最後）の姿勢で止まって保つ。止める → 残り（holdAt から最後まで＝起き上がるなど）を再生してから戻る
+  //         長さ 0 秒の VRMA（1 つの姿勢だけ）もこれで使える
+  let cur = null;   // { tracks, bones, name, mode, holdAt, t, clipT, dur, endAt, releaseAt, frozen }
 
-  function play(vrmAnimation, name, { loop = false } = {}) {
+  // 自動で決める：長さほぼ 0 → pose、始めと終わりの姿勢が同じで短い → loop、それ以外 → once
+  function guessMode(clip) {
+    if (clip.duration < 0.05) return 'pose';
+    let diff = 0;
+    for (const tr of clip.tracks) {
+      if (!/\.(quaternion|position)$/.test(tr.name)) continue;
+      const it = tr.createInterpolant();
+      const a = Array.from(it.evaluate(0)), b = Array.from(it.evaluate(clip.duration));
+      if (a.length === 4) diff = Math.max(diff, new THREE.Quaternion(...a).angleTo(new THREE.Quaternion(...b)));
+      else diff = Math.max(diff, Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) * 10);   // 腰の位置（1 cm ≒ 0.1）
+    }
+    return diff < 0.1 && clip.duration <= 4 ? 'loop' : 'once';
+  }
+
+  // fade：待機の姿勢と混ぜる時間（秒）。なければ FADE_SEC。長さ 0 秒のポーズは、姿勢が大きく変わるので POSE_FADE_SEC
+  function play(vrmAnimation, name, { mode = 'auto', holdAt, fade } = {}) {
     stop();
     const clip = createVRMAnimationClip(vrmAnimation, vrm);
     const bones = new Set();
@@ -52,34 +73,61 @@ export function createPlayer(vrm) {
       binding.bind();
       return { interp: tr.createInterpolant(), binding };
     }).filter((x) => x.binding.node);
+    const dur = clip.duration;
+    if (mode === 'auto' || !mode) mode = guessMode(clip);
+    if (mode === 'loop' && dur < 0.05) mode = 'pose';
     cur = {
-      tracks, bones, name, t: 0, dur: clip.duration, loop,
+      tracks, bones, name, mode, dur, t: 0, clipT: 0,
+      holdAt: mode === 'pose' ? Math.min(dur, holdAt ?? dur) : dur,
+      endAt: mode === 'once' ? dur : Infinity,   // 最後の姿勢に着く時刻（ここから FADE_SEC で待機に戻る）
+      releaseAt: null, frozen: null,
+      fade: fade ?? (dur < 0.05 ? POSE_FADE_SEC : FADE_SEC),
       hasExpr: vrmAnimation.expressionTracks.preset.size + vrmAnimation.expressionTracks.custom.size > 0,
       hasLookAt: vrmAnimation.lookAtTrack != null,
     };
+    return mode;
   }
 
+  // すぐ片づける（次の動きを始めるとき）
   function stop() {
     if (!cur) return;
     for (const x of cur.tracks) x.binding.unbind();
     cur = null;
   }
 
+  // 「止める」ボタン：動きに合わせて、なめらかに待機へ戻す
+  function release() {
+    if (!cur || cur.releaseAt != null) return;
+    const c = cur;
+    c.releaseAt = c.t;
+    if (c.mode === 'once') { c.frozen = c.clipT; c.endAt = c.t; }                              // その姿勢のまま戻る
+    else if (c.mode === 'loop') { c.endAt = (Math.floor(c.t / c.dur) + 1) * c.dur; }            // 今の 1 回を終えてから
+    else { c.releaseClip = c.clipT; c.endAt = c.t + (c.dur - c.clipT); }                          // 今の所から最後まで（かがむ途中で止めても跳ばない）
+  }
+
   // 時間を進め、骨に VRMA の角度を書き込む。戻り値：混ぜる重み（0〜1）と、動かした骨
   function update(dt) {
     if (!cur) return null;
-    cur.t += dt;
-    if (!cur.loop && cur.t >= cur.dur + FADE_SEC) { stop(); return null; }
-    // 今の時刻の値を、毎フレーム必ず骨（と表情・目線）に書く。終わったあとは最後の姿勢のまま
-    const time = cur.loop ? cur.t % cur.dur : Math.min(cur.t, cur.dur);
-    for (const x of cur.tracks) x.binding.setValue(x.interp.evaluate(time), 0);
-    const fadeIn = Math.min(1, cur.t / FADE_SEC);
-    const fadeOut = cur.loop ? 1 : Math.min(1, Math.max(0, (cur.dur - cur.t) / FADE_SEC + 1));   // 終わってから FADE_SEC で戻す
+    const c = cur;
+    c.t += dt;
+    if (c.t >= c.endAt + c.fade) { stop(); return null; }
+    // 動きの中の時刻
+    if (c.frozen != null) c.clipT = c.frozen;
+    else if (c.mode === 'loop') c.clipT = c.t >= c.endAt ? c.dur : c.t % c.dur;
+    else if (c.mode === 'pose') c.clipT = c.releaseAt == null ? Math.min(c.t, c.holdAt) : Math.min(c.dur, c.releaseClip + (c.t - c.releaseAt));
+    else c.clipT = Math.min(c.t, c.dur);
+    // 今の時刻の値を、毎フレーム必ず骨（と表情・目線）に書く
+    for (const x of c.tracks) x.binding.setValue(x.interp.evaluate(c.clipT), 0);
+    const fadeIn = Math.min(1, c.t / c.fade);
+    const fadeOut = Math.min(1, Math.max(0, 1 - (c.t - c.endAt) / c.fade));   // 最後の姿勢に着いてから fade 秒で戻す
     const e = (x) => x * x * (3 - 2 * x);
-    // finished：最後まで再生した（three はこのあと骨を書かなくなるので、motion.js が最後の姿勢を持ち続ける）
-    return { w: e(Math.min(fadeIn, fadeOut)), bones: cur.bones, hasExpr: cur.hasExpr, hasLookAt: cur.hasLookAt, name: cur.name,
-      finished: !cur.loop && cur.t >= cur.dur };
+    // finished：最後の姿勢に着いた（motion.js が最後の姿勢を持ち続ける）
+    return { w: e(Math.min(fadeIn, fadeOut)), bones: c.bones, hasExpr: c.hasExpr, hasLookAt: c.hasLookAt, name: c.name,
+      finished: c.t >= c.endAt };
   }
 
-  return { play, stop, update, get playing() { return cur ? cur.name : null; }, get duration() { return cur ? cur.dur : 0; }, get time() { return cur ? cur.t : 0; } };
+  return { play, stop, release, update,
+    get playing() { return cur ? cur.name : null; }, get mode() { return cur ? cur.mode : null; },
+    get releasing() { return !!(cur && cur.releaseAt != null); },
+    get duration() { return cur ? cur.dur : 0; }, get time() { return cur ? cur.t : 0; }, get clipTime() { return cur ? cur.clipT : 0; } };
 }

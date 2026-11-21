@@ -62,8 +62,14 @@ export function createMotion(vrm, camera, { getMotion = async () => null, emotio
     nextIdleAt = t + IDLE.dur[type] + IDLE.gapMin + Math.random() * (IDLE.gapMax - IDLE.gapMin);
   }
 
-  function updateIdle() {
-    if (player.playing) { idleType = null; idleW = 0; nextIdleAt = Math.max(nextIdleAt, t + IDLE.gapMin); return; }
+  function updateIdle(dt) {
+    // VRMA が始まったら、待機のしぐさ（見回す・手を振る）は 0.35 秒でなめらかに消す
+    // （前はすぐ消していたので、見回している途中に動きを始めると、頭が 1 コマで 20 度跳んだ。2026-11-21）
+    if (player.playing) {
+      if (idleType) { idleW = Math.max(0, idleW - dt / 0.35); if (idleW <= 0) idleType = null; }
+      nextIdleAt = Math.max(nextIdleAt, t + IDLE.gapMin);
+      return;
+    }
     if (idleType) {
       idleP = (t - idleStart) / IDLE.dur[idleType];
       if (idleP >= 1) { idleType = null; idleW = 0; return; }
@@ -93,7 +99,7 @@ export function createMotion(vrm, camera, { getMotion = async () => null, emotio
 
   function update(dt) {
     t += dt;
-    updateIdle();
+    updateIdle(dt);
 
     // 1〜3. 元に戻す → VRMA の下書き → コードの入らない骨を重みで
     resetPose();
@@ -125,7 +131,7 @@ export function createMotion(vrm, camera, { getMotion = async () => null, emotio
     const hm = a && HAND_MOTIONS[a.name];
     let kneesW = 0;
     if (hm && hm.pose === 'knees') {
-      const [t0, t1, t2, t3] = hm.times, pt = player.time;
+      const [t0, t1, t2, t3] = hm.times, pt = player.clipTime;   // 動きの中の時刻（ポーズで保っている間は止まっている）
       // 直線で渡す（pose.js の側で、手を離す・置く段取りがなめらかにつなぐ。ここでもなめらかにすると途中が速くなりすぎた）
       const lin = (x) => Math.min(1, Math.max(0, x));
       kneesW = Math.min(lin((pt - t0) / (t1 - t0)), 1 - lin((pt - t2) / (t3 - t2)));
@@ -170,10 +176,8 @@ export function createMotion(vrm, camera, { getMotion = async () => null, emotio
   async function playMotion(name, opts) {
     const anim = await getMotion(name);
     if (!anim) return false;
-    idleType = null; idleW = 0;
-    snap.clear();
-    player.play(anim, name, opts);
-    return true;
+    snap.clear();   // 待機のしぐさは updateIdle がなめらかに消す
+    return player.play(anim, name, opts) || true;   // 再生のしかた（once / loop / pose）を返す
   }
 
   // 感情の表情を出す。spec：EMOTIONS の名前（"shy"）／{ name, weight, fadeSec }／{ 表情名: 重み }
@@ -194,7 +198,7 @@ export function createMotion(vrm, camera, { getMotion = async () => null, emotio
     let dur = 2.5;
     if (m === 'code:wave' || m === 'code:look') { startIdle(m.slice(5)); dur = IDLE.dur[m.slice(5)]; }
     else if (m) {
-      const ok = await playMotion(m);
+      const ok = await playMotion(m, { mode: 'once' });   // 触ったときの反応は 1 回だけ（始めと終わりが同じでも繰り返さない）
       if (!ok && m === PAT_MOTION) { patAt = t; patByVRMA = false; dur = PAT_DUR; }   // pat_happy がなければ前のコードの動き
       else if (ok) { patByVRMA = true; dur = player.duration || dur; }
       // ほかの動きが見つからなければ、表情と目線だけ（「8.」の決まり）
@@ -208,8 +212,9 @@ export function createMotion(vrm, camera, { getMotion = async () => null, emotio
   // 頭がタップされた（前の呼び方。今は react を使う）
   function pat() { return react({ motion: PAT_MOTION, expression: 'happy' }); }
 
-  return { update, pat, react, setEmotion, startIdle, playMotion, stopMotion: () => player.stop(),
-    get playing() { return player.playing; }, get busy() { return !!player.playing || idleType === 'wave'; } };
+  return { update, pat, react, setEmotion, startIdle, playMotion, stopMotion: () => player.stop(), releaseMotion: () => player.release(),
+    get playing() { return player.playing; }, get mode() { return player.mode; }, get releasing() { return player.releasing; },
+    get busy() { return !!player.playing || idleType === 'wave'; } };
 }
 
 // 画面の点 (x, y) が頭に当たっているか（頭の骨を画面に写して判定）

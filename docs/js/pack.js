@@ -16,6 +16,12 @@
 //   "pose": { "CLASP": { "curl": 0.2 } },
 //   "expressions": { "shy": { "relaxed": 0.5, "happy": 0.2 } } }   ← 表情の組み合わせ（touch.js の EMOTIONS を上書き・追加）
 // touch.json の書き方は touch.js の DEFAULT_TOUCH と同じ
+// motions/motions.json（common/motions/ とキャラクターの motions/ のどちらにも置ける。なくてもよい）：
+// { "jump": { "name": "ジャンプ", "type": "loop" },                        ← type：once（1 回）／loop（繰り返し）／pose（ポーズ）。
+//   "lean_forward": { "name": "前かがみ", "type": "pose", "holdAt": 1.1 },     書かなければ自動（長さ 0 → pose、始めと終わりが同じで短い → loop）
+//   "idle_sit": { "menu": false } }                                         ← 「動き」の一覧に出さない
+//   holdAt：ポーズで止める時刻（秒）。「止める」で残りを再生する（起き上がるなど）
+//   fade：始め・終わりに待機の姿勢と混ぜる時間（秒。標準 0.4、長さ 0 秒のポーズは 1.0）
 // character.json がなければ、models/ の .vrm を全部、衣装として並べる。
 
 const COMMON = 'common';
@@ -39,6 +45,7 @@ export async function buildPack(files) {
   const charDirs = flat ? [''] : [...new Set(paths.filter((p) => p.includes('/')).map((p) => p.split('/')[0]))].filter((d) => d !== COMMON);
 
   const commonMotions = flat ? [] : motionsIn(COMMON + '/motions/');
+  const commonConf = flat ? {} : await readMotionConf(COMMON + '/motions/', COMMON);
   const chars = [];
   for (const dir of charDirs.sort()) {
     const pre = dir ? dir + '/' : '';
@@ -68,13 +75,23 @@ export async function buildPack(files) {
       try { touch = JSON.parse(await touchBlob.text()); }
       catch (e) { throw new Error(id + '/touch.json の書き方に誤りがあります（' + e.message + '）'); }
     }
-    chars.push({ id, dir: pre, name: conf.name || id, outfits, pose: conf.pose || null, motions, touch,
-      expressions: conf.expressions || null,
-      springs: conf.springs || null });   // 揺れものの当たり判定（springs.js の SPRINGS を上書き）   // 表情の組み合わせ（例 { "shy": { "Blush": 1, "relaxed": 0.3 } }）
+    // 動きの設定（motions.json。同じ名前ならキャラクターの方を使う）
+    const motionConf = { ...commonConf, ...(await readMotionConf(pre + 'motions/', id)) };
+    chars.push({ id, dir: pre, name: conf.name || id, outfits, pose: conf.pose || null, motions, motionConf, touch,
+      expressions: conf.expressions || null,   // 表情の組み合わせ（例 { "shy": { "Blush": 1, "relaxed": 0.3 } }）
+      springs: conf.springs || null });        // 揺れものの当たり判定（springs.js の SPRINGS を上書き）
   }
 
   const total = files.reduce((s, f) => s + f.blob.size, 0);
   return { chars, byPath, total, count: files.length };
+
+  // motions.json（動きの名前 → { name, type, holdAt, menu }）。なければ空
+  async function readMotionConf(dirPrefix, who) {
+    const b = byPath.get(dirPrefix + 'motions.json');
+    if (!b) return {};
+    try { return JSON.parse(await b.text()) || {}; }
+    catch (e) { throw new Error(who + '/motions/motions.json の書き方に誤りがあります（' + e.message + '）'); }
+  }
 
   // 名前（拡張子なし）→ 道すじ
   function motionsIn(dirPrefix) {
