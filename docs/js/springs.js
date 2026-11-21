@@ -19,6 +19,20 @@ export const SPRINGS = {
   squeeze: { joints: 'Bust', at: [0.2, 0.5, 0.8], arms: [['UpperArm', 'LowerArm', 0.045], ['LowerArm', 'Hand', 0.035]] },
 };
 
+// 胸を左右から寄せる（2026-11-21 先生：胸の前でグーで、脇をしめて胸を寄せる）。
+// 胸のふくらみは腕より前にあるので、腕の当たり判定を太くしても届かなかった（胸の先の左右の間は 19 cm のまま）。
+// そこで、胸の横に見えない玉（上胸の骨に付ける）を置き、ポーズの重み w に合わせて外から内へ動かして、胸の揺れものを内へ押す。
+// amount：胸の先を内へ押す量（m）。w = 0 のときは胸から離れた所にあり、ふだんの揺れには触れない
+const PAD = { radius: 0.05, clear: 0.06, back: 0.03, up: 0.0 };
+export function setBustSqueeze(vrm, w, amount) {
+  const pads = vrm.scene.userData.vroidBustPads;
+  if (!pads) return;
+  for (const p of pads) {
+    const out = PAD.clear * (1 - w) - (amount || 0) * w;   // 胸の先の横から、どれだけ外に玉の表面を置くか
+    p.c.shape.offset.copy(p.tip).addScaledVector(p.outward, PAD.radius + p.hit + out).addScaledVector(p.backDir, PAD.back);
+  }
+}
+
 // どの骨に付いた当たり判定か（leftUpperArm など）
 function partOf(vrm, obj) {
   const raw = new Map();
@@ -64,6 +78,28 @@ export function setupSprings(vrm, conf) {
     }
     const group = { colliders, name: 'vroidApp_squeeze' };   // 当たり判定の組（VRM の決まりと同じ形）
     for (const j of sbm.joints) if (j.bone.name.includes(sq.joints)) { j.colliderGroups = [...j.colliderGroups, group]; added++; }
+  }
+  // 胸を左右から寄せる玉（setBustSqueeze で動かす）。元の姿勢のうちに、胸の先の位置と外向きを上胸の骨から見て覚える
+  const chest = vrm.humanoid.getRawBoneNode('upperChest') || vrm.humanoid.getRawBoneNode('chest');
+  if (chest) {
+    vrm.scene.updateMatrixWorld(true);
+    const pads = [];
+    for (const j of sbm.joints) {
+      if (!/Bust2/.test(j.bone.name) || !j.child) continue;
+      const tipW = j.child.getWorldPosition(new THREE.Vector3());
+      const side = Math.sign(tipW.x - chest.getWorldPosition(new THREE.Vector3()).x) || 1;
+      const toLocalDir = (v) => chest.worldToLocal(chest.getWorldPosition(new THREE.Vector3()).add(v)).normalize();
+      const c = new VRMSpringBoneCollider(new VRMSpringBoneColliderShapeSphere({ offset: new THREE.Vector3(), radius: PAD.radius }));
+      c.name = 'vroidApp_bustPad';
+      chest.add(c);
+      pads.push({ c, tip: chest.worldToLocal(tipW.clone()), outward: toLocalDir(new THREE.Vector3(side, 0, 0)), backDir: toLocalDir(new THREE.Vector3(0, 0, -1)), hit: j.settings.hitRadius || 0 });
+    }
+    if (pads.length) {
+      vrm.scene.userData.vroidBustPads = pads;
+      setBustSqueeze(vrm, 0, 0);
+      const group = { colliders: pads.map((p) => p.c), name: 'vroidApp_bustPad' };
+      for (const j of sbm.joints) if (/Bust/.test(j.bone.name)) { j.colliderGroups = [...j.colliderGroups, group]; added++; }
+    }
   }
   return { added };
 }

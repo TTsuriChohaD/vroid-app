@@ -8,8 +8,9 @@
 //   5. 腕・肩・指（入れ替える骨）は、コードの姿勢から VRMA の角度へ重み w で近づける ＝ ② 切り替える
 //   6. 表情・まばたき・目線（③ 見る先だけ決める）→ vrm.update()
 import * as THREE from 'three';
-import { applyPose, LOOK, WAVE, PAT, HAND_MOTIONS } from './pose.js';
+import { applyPose, LOOK, WAVE, PAT, HAND_MOTIONS, FISTS } from './pose.js';
 import { createPlayer } from './vrma.js';
+import { setBustSqueeze } from './springs.js';
 
 // 待機中のしぐさ
 const IDLE = {
@@ -129,16 +130,21 @@ export function createMotion(vrm, camera, { getMotion = async () => null, emotio
     const blendShoulders = a ? () => { for (const [b, q] of snap) if (isShoulder(b)) { node(b).quaternion.slerp(q, a.w); node(b).updateMatrixWorld(true); } } : null;
     // 手をひざに置く動き（前かがみ）：VRMA の時刻に合わせて、手を置く重みを決める
     const hm = a && HAND_MOTIONS[a.name];
-    let kneesW = 0, leanWaveW = 0, leanWaveSide = 'right';
-    if (hm && hm.pose === 'knees') {
+    // 手の形の動き（pose：knees＝ひざに置く、fists＝胸の前でグーをくっつける）
+    let kneesW = 0, fistsW = 0, leanWaveW = 0, leanWaveSide = 'right';
+    if (hm) {
       const [t0, t1, t2, t3] = hm.times, pt = player.clipTime;   // 動きの中の時刻（ポーズで保っている間は止まっている）
       // 直線で渡す（pose.js の側で、手を離す・置く段取りがなめらかにつなぐ。ここでもなめらかにすると途中が速くなりすぎた）
       const lin = (x) => Math.min(1, Math.max(0, x));
-      kneesW = Math.min(lin((pt - t0) / (t1 - t0)), 1 - lin((pt - t2) / (t3 - t2)));
+      const hw = Math.min(lin((pt - t0) / (t1 - t0)), 1 - lin((pt - t2) / (t3 - t2)));
+      if (hm.pose === 'knees') kneesW = hw;
+      if (hm.pose === 'fists') fistsW = hw;
       // ひざに置いた手を挙げて手を振る（再生を始めてからの時間で。ポーズで保っている間も時間は進む）。止めると体と一緒に下ろす
-      if (hm.wave) { leanWaveW = Math.min(lin((player.time - hm.wave.start) / hm.wave.rise), kneesW); leanWaveSide = hm.wave.side; }
+      if (hm.wave) { leanWaveW = Math.min(lin((player.time - hm.wave.start) / hm.wave.rise), hw); leanWaveSide = hm.wave.side; }
     }
-    applyPose(vrm, t, { lookW, lookP: idleP, waveW, patW: patByVRMA ? 0 : pw, patT: t - patAt, animW, blendShoulders, kneesW, leanWaveW, leanWaveSide });
+    applyPose(vrm, t, { lookW, lookP: idleP, waveW, patW: patByVRMA ? 0 : pw, patT: t - patAt, animW, blendShoulders, kneesW, fistsW, leanWaveW, leanWaveSide });
+    // 胸の前でグーの間だけ、胸を左右から寄せる（脇をしめて胸を寄せる）
+    setBustSqueeze(vrm, fistsW, FISTS.bustSqueeze);
 
     // 5. 腕・指は、コードの姿勢から VRMA へ切り替える（肩は腕を解く前に混ぜてある）
     if (a) for (const [b, q] of snap) if (REPLACE.test(b) && !isShoulder(b)) node(b).quaternion.slerp(q, a.w);

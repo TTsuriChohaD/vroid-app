@@ -80,6 +80,8 @@ export const HAND_MOTIONS = {
   lean_forward: { pose: 'knees', times: [0.0, 0.95, 1.1, 2.3] },
   // 前かがみのまま右手を挙げて手を振る（2026-11-21 先生）。両手をひざに置いたあと、wave.start 秒（再生を始めてからの時間）から
   // wave.rise 秒かけて右手を挙げる。止めると、体が起き上がるのに合わせて手を下ろす
+  // 脇をしめて、軽く握った手を鎖骨のあたりでくっつける（2026-11-21 先生）。動きは 1.6 秒（寄せる 0.8・戻る 0.8）、0.8 秒で止めて保つ
+  fists_chest: { pose: 'fists', times: [0.0, 0.75, 0.8, 1.6] },
   lean_wave: { pose: 'knees', times: [0.0, 0.95, 1.1, 2.3], wave: { side: 'right', start: 1.3, rise: 1.2 } },   // rise 0.7 では手が速く回った
 };
 
@@ -93,9 +95,28 @@ export const LEAN_WAVE = {
   armSway: 0.015,             // 手首も一緒に少し左右に動かす（m。前腕ごと揺れる感じ）
 };
 
+// 脇をしめて腕を曲げ、軽く握った手を鎖骨のあたりでくっつける（fists_chest。2026-11-21 先生）。値はキャラの左手側（右は X を反転）
+// 位置は首の骨から（世界の向き、m）。手の向きは手のひらが胸の方・少し内向き、指（開いたとき）は上へ
+export const FISTS = {
+  at: [0.1, -0.005, 0.2],     // 手のひらの中心：首の骨から 外・上・前（前 0.14 → 0.2：前腕を前へ立てると、胸への食い込みが減った）。
+                              // 2026-11-21 先生：脇はしめたまま、肘から先を立てて手の間隔をあける（こぶしは真ん中でくっつけない）。
+                              // 前の 0.012（くっつける）では前腕が斜めに胸のふくらみの上を通り、約 2 cm 食い込んだ。0.1 でほぼ 0
+                              // 高さはあごの下（2026-11-21 先生：あご下くらいまで上げてよい。前は -0.045＝鎖骨。-0.09 では胸に重なった）
+  fingers: [-0.2, 1, 0.3],    // 開いた手なら指先が向く向き（左手。少し内・上・少し前）
+  palm: [-0.8, 0.1, -0.6],    // 手のひらが向く向き（左手。内側＝向かい合わせ・胸の方）。こぶしの指の側どうしがくっつく
+  elbow: [-0.1, -1, 0.5],     // 肘を逃がす向き（右腕の値。下・ほんの少し外・前＝肘を体に寄せて脇をしめる、前腕が胸から浮く）
+                              // （2026-11-21 先生：脇をしめて胸を寄せる。外 -0.3 → -0.1）
+                              // （少し後ろ -0.15 では、前腕が胸の上の肌に約 2.5 cm 食い込んだ。手を前 0.17・肘を前 0.5 で 0 に）
+                              // （内向きにすると肘が体の中に入った）
+  curl: 0.9,                  // 軽く握る（0.75 では指が開いて見えた）
+  bustSqueeze: 0.07,          // このポーズの間だけ、胸の先を左右から内へ押す量（m。springs.js の setBustSqueeze）。
+                              // 2026-11-21 先生：ぎりぎりまで寄せる → 0.07（胸の先の間 4.6 cm）。0.08 で 4.0 cm、0.09 では玉が胸の先を越えて逆に開いた
+  pull: 0.25,                 // 重ねた手を離す長さ（割合）
+};
+
 // ---------- キャラクターごとの数値（character.json の "pose"）で上書きする ----------
 // 例：{ "CLASP": { "curl": 0.2, "head": [0.06, 0, 0.03] } }。書いていない数値は標準の値のまま
-const TABLES = { CLASP, BREATH, LOOK, WAVE, PAT, KNEES, HAND_MOTIONS, LEAN_WAVE };
+const TABLES = { CLASP, BREATH, LOOK, WAVE, PAT, KNEES, HAND_MOTIONS, LEAN_WAVE, FISTS };
 const DEFAULTS = JSON.parse(JSON.stringify(TABLES));
 export function setPoseOverrides(over) {
   for (const [name, table] of Object.entries(TABLES)) {
@@ -271,6 +292,39 @@ function placeOnKnees(B, root, w) {
   return aw;
 }
 
+// 胸の前でグーをくっつける（数値は上の FISTS）。重ねた手を離してから、こぶしを鎖骨の前へ
+function placeFists(B, root, w) {
+  const neck = B('neck'); if (!neck) return 0;
+  const pw = smooth01(w / FISTS.pull), aw = smooth01(w);
+  const rq = new THREE.Quaternion(); root.getWorldQuaternion(rq);
+  neck.updateWorldMatrix(true, false);
+  const Np = neck.getWorldPosition(new THREE.Vector3());
+  for (const side of ['left', 'right']) {
+    const la = B(side + 'LowerArm'), hd = B(side + 'Hand');
+    if (!la || !hd) continue;
+    const m = side === 'left' ? 1 : -1;
+    pullOut(B, side, pw);
+    if (aw <= 0) continue;
+    const mir = ([x, y, z]) => V3(x * m, y, z).applyQuaternion(rq);
+    const palmC = Np.clone().add(mir(FISTS.at));
+    const palmDir = mir(FISTS.palm).normalize();
+    const fingers = mir(FISTS.fingers).projectOnPlane(palmDir).normalize();
+    // 手の骨の決まり：右手は指先 -X・親指 +Z・手のひら -Y、左手は X が逆
+    const X = side === 'right' ? fingers.clone().negate() : fingers.clone(), Y = palmDir.clone().negate(), Z = X.clone().cross(Y);
+    const handW = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(X, Y, Z));
+    const palmOff = V3(side === 'right' ? -PALM.along : PALM.along, -PALM.down, 0).applyQuaternion(handW);
+    const keep = hd.quaternion.clone();
+    armIK(B, side, palmC.sub(palmOff), aw, null, V3(...FISTS.elbow), 0);
+    la.updateWorldMatrix(true, false);
+    const handLocal = la.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(handW);
+    const blended = keep.clone().slerp(handLocal, aw);
+    const tw = twistAbout(blended, V3(1, 0, 0), KNEES.forearmTwist * aw);   // ねじれは前腕に（手首が細くならないように）
+    la.quaternion.multiply(tw);
+    hd.quaternion.copy(tw.invert().multiply(blended));
+  }
+  return aw;
+}
+
 // 前かがみのまま手を振る（数値は上の LEAN_WAVE）
 function leanWave(B, root, w, t, side) {
   const ua = B(side + 'UpperArm'), la = B(side + 'LowerArm'), hd = B(side + 'Hand'), head = B('head');
@@ -350,6 +404,8 @@ export function applyPose(vrm, t, s) {
   clasp(B, breath, s.blendShoulders);
   // 手をひざに置く（前かがみ）
   const kneeAct = s.kneesW > 0 ? placeOnKnees(B, vrm.scene, s.kneesW) : 0;
+  // 脇をしめて、軽く握った手を鎖骨のあたりでくっつける（fists_chest）
+  const fistAct = s.fistsW > 0 ? placeFists(B, vrm.scene, s.fistsW) : 0;
 
   // 首と頭：少しうつむき・かしげる。見回す
   const lookYaw = s.lookW * LOOK.yaw * Math.sin(s.lookP * Math.PI * 2);
@@ -385,7 +441,8 @@ export function applyPose(vrm, t, s) {
   if (s.leanWaveW > 0) waveAct = Math.max(waveAct, leanWave(B, vrm.scene, s.leanWaveW, t, s.leanWaveSide || 'right'));
 
   // 指：ふだんはほとんど伸ばす。手を振るときは開く
-  const curl = CLASP.curl + (KNEES.curl - CLASP.curl) * kneeAct;
+  let curl = CLASP.curl + (KNEES.curl - CLASP.curl) * kneeAct;
+  curl += (FISTS.curl - curl) * fistAct;
   curlHand(B, 'right', curl * (1 - waveAct));
   curlHand(B, 'left', curl);
 }
