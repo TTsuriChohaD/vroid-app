@@ -242,14 +242,27 @@
   </div>
 </dialog>
 
+<!-- ./js/ の ?v= は版の印。部品（js/）を変えて送るときは、ここと下の main.js の印を全部そろえて上げる
+     （GitHub Pages はファイルを 10 分スマホに取っておくので、古い部品が新しいページと混ざって止まるのを防ぐ。2026-11-24） -->
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
   "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.1.0/lib/three-vrm.module.js",
-  "@pixiv/three-vrm-animation": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-animation@3.1.0/lib/three-vrm-animation.module.js"
+  "@pixiv/three-vrm-animation": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-animation@3.1.0/lib/three-vrm-animation.module.js",
+  "./js/ar.js": "./js/ar.js?v=20261124c",
+  "./js/look.js": "./js/look.js?v=20261124c",
+  "./js/lookpanel.js": "./js/lookpanel.js?v=20261124c",
+  "./js/motion.js": "./js/motion.js?v=20261124c",
+  "./js/pack.js": "./js/pack.js?v=20261124c",
+  "./js/pose.js": "./js/pose.js?v=20261124c",
+  "./js/springs.js": "./js/springs.js?v=20261124c",
+  "./js/springtouch.js": "./js/springtouch.js?v=20261124c",
+  "./js/store.js": "./js/store.js?v=20261124c",
+  "./js/touch.js": "./js/touch.js?v=20261124c",
+  "./js/vrma.js": "./js/vrma.js?v=20261124c"
 } }
 </script>
-<script type="module" src="js/main.js"></script>
+<script type="module" src="js/main.js?v=20261124c"></script>
 </body>
 </html>
