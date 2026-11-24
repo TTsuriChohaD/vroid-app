@@ -461,6 +461,11 @@ const ar = createAR({
   renderer, scene, camera, getVrm: () => vrm,
   onTap: (region, side) => { if (region) onTouch(region, 'tap', side); },
   onAnyTap: () => closePanels(),
+  // 揺れもの（springtouch.js）と「なでる」も、いつもの画面と同じに（2026-11-24 先生：AR で揺れものが反応しない）
+  onPress: (h, x, y) => { if (springTouch) springTouch.press(h, x, y); },
+  onStrokeMove: (x, y) => { if (springTouch) springTouch.move(x, y); },
+  onRelease: () => { if (springTouch) springTouch.release(); },
+  onStroke: (side) => onTouch('head', 'stroke', side),
   onStart: () => {
     document.documentElement.classList.add('ar');
     $('arBtn').classList.add('on');
