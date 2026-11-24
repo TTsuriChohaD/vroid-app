@@ -184,7 +184,8 @@ export function createMotion(vrm, camera, { getMotion = async () => null, emotio
     const lx = lookW * LOOK.eyesX * Math.sin(idleP * Math.PI * 2) + away[0], ly = lookW * LOOK.eyesY + away[1];
     look[0] += (lx - look[0]) * lerpK(0.12, dt);
     look[1] += (ly - look[1]) * lerpK(0.12, dt);
-    lookTarget.position.copy(camera.position).add(new THREE.Vector3(look[0], look[1], 0));
+    // カメラの位置は世界の座標で（AR ではカメラが台に載っているので、position だけでは違う所になる）
+    camera.getWorldPosition(lookTarget.position).add(new THREE.Vector3(look[0], look[1], 0));
 
     vrm.update(dt);
   }

@@ -105,6 +105,10 @@
   #motionBtn.playing { background: var(--accent); border-color: var(--accent); color: #fff; }
   #motionBtn.playing .when-idle { display: none; }
   #motionBtn.playing .when-playing { display: block; }
+  /* AR（2026-11-24）：カメラの映像の上に、ページのボタンだけを重ねる（背景と 3D の画面は消す。3D は AR の画面に描く） */
+  #arBtn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  html.ar, html.ar body { background: transparent !important; }
+  html.ar #stage, html.ar #modeBtn, html.ar #fps, html.ar #intro { visibility: hidden; }
   /* 開いているボタン（もう一度押すと閉じる） */
   .icon[aria-expanded="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
   /* 上のボタンで開く画面：ボタンの下に出し、ボタンは押せるままにする（modal にしない） */
@@ -173,6 +177,10 @@
   <!-- 見た目のテスト（光・材質・画面の効果。2026-11-24） -->
   <button class="icon" id="lookBtn" type="button" title="見た目の調整" aria-label="見た目の調整">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></svg>
+  </button>
+  <!-- AR：カメラの映像の上に置く（AR が使える端末だけ出す。2026-11-24） -->
+  <button class="icon" id="arBtn" type="button" hidden title="AR（カメラの映像の上に置く）" aria-label="AR（カメラの映像の上に置く）">
+    <svg viewBox="0 0 24 24"><path d="M12 3l7.5 4.2v8.6L12 20l-7.5-4.2V7.2z"/><path d="M12 11.6l7.5-4.4M12 11.6L4.5 7.2M12 11.6V20"/></svg>
   </button>
   <button class="icon" id="about" type="button" title="このページについて" aria-label="このページについて">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 1 1 3.4 2.4c-.6.3-1 .8-1 1.5v.6"/><circle cx="12" cy="16.8" r=".6" class="fill"/></svg>

@@ -13,6 +13,7 @@ import { setupSprings } from './springs.js';
 import { createLook } from './look.js';
 import { createLookPanel } from './lookpanel.js';
 import { createSpringTouch } from './springtouch.js';
+import { createAR } from './ar.js';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -157,7 +158,8 @@ async function loadArrayBuffer(ab, name) {
   const hp = new THREE.Vector3();
   const head = vrm.humanoid.getNormalizedBoneNode('head');
   if (head) { head.getWorldPosition(hp); headY = hp.y; }
-  frameView();
+  if (!ar.active) frameView();
+  showArBtn();
 
   $('intro').hidden = true;
   setStatus('');
@@ -451,14 +453,51 @@ async function loadFromPC() {
 window.vroidApp = {
   loadArrayBuffer, frameView, camera, controls, usePack,
   get motion() { return motion; }, get pack() { return pack; }, get current() { return current; }, get vrm() { return vrm; },
-  get lastTouch() { return lastTouch; }, onTouch, look, get springTouch() { return springTouch; },
+  get lastTouch() { return lastTouch; }, onTouch, look, get springTouch() { return springTouch; }, get ar() { return ar; },
 };
+
+// ---------- AR（ar.js。2026-11-24 先生：立体視より先に AR） ----------
+// 床の白い輪をタップ → そこに実寸で立つ（こちら向き）。キャラクターにふれたら部位の反応、外をタップしたら置き直す
+// AR の間は、ページのボタンだけをカメラの映像の上に重ねる（指で回す・寄る操作と、画面の効果は止める）
+const ar = createAR({
+  renderer, scene, camera, getVrm: () => vrm,
+  onTap: (region, side) => { if (region) onTouch(region, 'tap', side); },
+  onAnyTap: () => closePanels(),
+  onStart: () => {
+    document.documentElement.classList.add('ar');
+    $('arBtn').classList.add('on');
+    controls.enabled = false;
+    if (springTouch) springTouch.release();
+  },
+  onEnd: () => {
+    document.documentElement.classList.remove('ar');
+    $('arBtn').classList.remove('on');
+    controls.enabled = true;
+    resize();
+    frameView();
+    setStatus('');
+  },
+  hint: (t) => setStatus(t),
+});
+let arOk = false;
+ar.supported().then((ok) => { arOk = ok; showArBtn(); });
+function showArBtn() { $('arBtn').hidden = !(arOk && vrm); }
+$('arBtn').addEventListener('click', async () => {
+  if (ar.active) { ar.end(); return; }
+  closePanels();
+  try { await ar.start(); }
+  catch (err) { console.error(err); flash('AR を始められませんでした：' + errText(err), true); }
+});
+// AR の間、ページのボタンを押したときは「タップ」（置く・触れる）にしない
+document.addEventListener('beforexrselect', (e) => {
+  if (e.target && e.target.closest && e.target.closest('button, label, select, input, dialog, .bar, #status')) e.preventDefault();
+});
 
 // ---------- 描画のくり返し ----------
 const clock = new THREE.Clock();
-renderer.setAnimationLoop(() => {
+renderer.setAnimationLoop((time, frame) => {
   const dt = Math.min(clock.getDelta(), 0.1);
-  controls.update();
+  if (ar.active) ar.update(frame); else controls.update();
   if (springTouch && vrm) {
     springTouch.update(dt);   // 触れている間の力を揺れものに足し込む（vrm.update の前に）
     // 頭をなでている間の小さな反応：手が頭のどちら側か（キャラの左＝+1）
@@ -471,5 +510,6 @@ renderer.setAnimationLoop(() => {
   if (motion) motion.update(dt);   // 姿勢・しぐさ・表情・目線（カメラが動いたあとに）
   if (springTouch) springTouch.updateDebug();
   updateStopButton();
-  look.render();   // 立体視・画面全体の効果があればここで（なければ今までと同じ描き方）
+  if (ar.active) renderer.render(scene, camera);   // AR は XR の画面にそのまま描く（画面の効果・立体視は使わない）
+  else look.render();   // 立体視・画面全体の効果があればここで（なければ今までと同じ描き方）
 });
