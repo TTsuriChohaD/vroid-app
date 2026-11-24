@@ -110,6 +110,29 @@
   /* 上のボタンで開く画面：ボタンの下に出し、ボタンは押せるままにする（modal にしない） */
   dialog.panel { position: fixed; top: calc(max(10px, env(safe-area-inset-top)) + 54px); left: 0; right: 0; margin: 0 auto;
                  max-height: calc(100vh - 90px); overflow: auto; z-index: 10; box-shadow: 0 6px 24px #0003; }
+  /* 見た目の調整（下半分のシート） */
+  dialog.panel.sheet { top: auto; bottom: 0; width: min(560px, 100%); max-height: 52vh; border-radius: 14px 14px 0 0;
+                       padding: 10px 14px calc(14px + env(safe-area-inset-bottom)); background: color-mix(in srgb, var(--bg1) 92%, transparent); }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; position: sticky; top: -10px; background: inherit; z-index: 1; }
+  .sheet-head h2 { margin: 0; font-size: 16px; }
+  .btn.small { min-height: 34px; padding: 0 12px; font-size: 13px; }
+  #lookBody .presets select { width: 100%; margin: 6px 0; }
+  #lookBody .btns { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+  #lookBody .sec { border-top: 1px solid var(--line); padding: 4px 0; }
+  #lookBody summary { font-weight: 600; padding: 8px 0; cursor: pointer; }
+  #lookBody summary input { vertical-align: middle; width: 20px; height: 20px; }
+  #lookBody h4 { margin: 10px 0 2px; font-size: 13px; color: var(--sub); }
+  #lookBody .row { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; margin: 6px 0; font-size: 13px; }
+  #lookBody .row input[type=range], #lookBody .row select { grid-column: 1 / -1; width: 100%; }
+  #lookBody .row.color input { grid-column: auto; width: 48px; height: 30px; padding: 0; border: none; background: none; }
+  #lookBody .row .val { color: var(--sub); font-variant-numeric: tabular-nums; }
+  #lookBody .toggle { display: block; margin: 8px 0; font-size: 13px; }
+  #lookBody .toggle input { width: 18px; height: 18px; vertical-align: middle; }
+  .hidden-file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  #fps { position: fixed; right: 10px; top: calc(max(10px, env(safe-area-inset-top)) + 54px); padding: 3px 8px; border-radius: 8px;
+         background: var(--btn); color: var(--fg); font-size: 12px; font-variant-numeric: tabular-nums; pointer-events: none; }
+  #fps[hidden] { display: none; }
+  body:has(#lookDlg[open]) #status { bottom: auto; top: calc(max(10px, env(safe-area-inset-top)) + 100px); z-index: 11; }   /* パネルに重ならないよう上に */
   /* 動きの一覧 */
   #motionList h3 { font-size: 14px; color: var(--sub); margin: 12px 0 6px; font-weight: normal; }
   #motionList h3:first-child { margin-top: 0; }
@@ -136,6 +159,10 @@
   <button class="icon" id="motionBtn" type="button" hidden title="動き" aria-label="動き">
     <svg viewBox="0 0 24 24" class="when-idle"><circle cx="12" cy="12" r="9"/><path d="M10 8.5v7l6-3.5z" class="fill"/></svg>
     <svg viewBox="0 0 24 24" class="when-playing"><circle cx="12" cy="12" r="9"/><rect x="8.5" y="8.5" width="7" height="7" rx="1" class="fill"/></svg>
+  </button>
+  <!-- 見た目のテスト（光・材質・画面の効果。2026-11-24） -->
+  <button class="icon" id="lookBtn" type="button" title="見た目の調整" aria-label="見た目の調整">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></svg>
   </button>
   <button class="icon" id="about" type="button" title="このページについて" aria-label="このページについて">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 1 1 3.4 2.4c-.6.3-1 .8-1 1.5v.6"/><circle cx="12" cy="16.8" r=".6" class="fill"/></svg>
@@ -168,10 +195,18 @@
 
 <div id="status"></div>
 
+<!-- 見た目の調整：画面の下半分に出し、上半分でキャラクターを見ながら動かす -->
+<dialog id="lookDlg" class="panel sheet">
+  <div class="sheet-head"><h2>見た目の調整</h2><form method="dialog"><button class="btn small">閉じる</button></form></div>
+  <div id="lookBody"></div>
+</dialog>
+<div id="fps" hidden></div>
+
 <dialog id="aboutDlg" class="panel">
   <h2>このページについて</h2>
   <ul>
-    <li>上のボタン：フォルダ（VroidApp を選ぶ）・人（キャラクターと衣装）・▶（動き）・？（このページ）。開いた画面は、同じボタンをもう一度押すと閉じます</li>
+    <li>上のボタン：フォルダ（VroidApp を選ぶ）・人（キャラクターと衣装）・▶（動き）・太陽（見た目の調整）・？（このページ）。開いた画面は、同じボタンをもう一度押すと閉じます</li>
+    <li>見た目の調整：光・材質（影・リムライト・輪郭線）・画面の効果（光のにじみ・色）をスライダーで変え、名前を付けて保存できます。「書き出す」で look.json を作り、VroidApp/&lt;キャラクター&gt;/ に置くと、フォルダを選び直したときに読み込みます。VRM ファイルは変えません</li>
     <li>動きは一覧から選ぶと始まります。動いている間は ▶ が ■ に変わり、押すと待機に戻ります。繰り返しの動きは止めるまで続き、ポーズは止めるまでその姿勢のままです</li>
     <li>キャラクターの外から 1 本指で回す、2 本指で寄る・引く・ずらす。キャラクターの外を 2 回タップで最初の見え方に戻ります</li>
     <li>頭を指でなでる・タップすると喜びます。ほお・手・肩などにふれても反応します</li>

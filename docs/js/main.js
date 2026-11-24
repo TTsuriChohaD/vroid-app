@@ -10,6 +10,8 @@ import { buildPack, outfitForToday } from './pack.js';
 import { loadSavedPack, savePack, loadSavedModel, saveModel, deleteSaved } from './store.js';
 import { loadVRMA, classifyVRMA } from './vrma.js';
 import { setupSprings } from './springs.js';
+import { createLook } from './look.js';
+import { createLookPanel } from './lookpanel.js';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -32,9 +34,13 @@ controls.screenSpacePanning = true;
 controls.minDistance = 0.4;
 controls.maxDistance = 8;
 
-const light = new THREE.DirectionalLight(0xffffff, Math.PI * 0.9);
-light.position.set(0.6, 1.2, 1.5);
-scene.add(light, new THREE.AmbientLight(0xffffff, 0.6));
+// 光・材質・画面全体の効果・立体視（確かめ用）・FPS は look.js（見た目のテスト。2026-11-24）
+// 光は今までと同じ（斜め前からの光 π×0.9 と全体の明るさ 0.6）から始める
+const look = createLook(renderer, scene, camera);
+const lookPanel = createLookPanel($('lookBody'), look, { flash: (t, e) => flash(t, e) });
+look.setFpsElement($('fps'));
+lookPanel.onBuilt = (S) => { $('fps').hidden = !S.fps; };
+lookPanel.build();
 
 function resize() {
   const w = window.innerWidth, h = window.innerHeight;
@@ -111,6 +117,8 @@ async function loadArrayBuffer(ab, name) {
   scene.add(vrm.scene);
   const ch = currentCharFor || null;
   setupSprings(vrm, ch && ch.springs);   // 揺れもの（胸・スカート）が腕・手に当たるように。元の姿勢のうちに呼ぶ
+  look.attach(vrm);                       // 見た目のテスト：材質の元の値を覚え、今の設定をかける（VRM ファイルは変えない）
+  lookPanel.useCharacter(ch ? ch.id : 'default', ch && ch.look);
   motion = createMotion(vrm, camera, { getMotion, emotions: { ...EMOTIONS, ...((ch && ch.expressions) || {}) } });   // 姿勢・しぐさ・表情・目線・VRMA
 
   motion.update(0);
@@ -198,7 +206,7 @@ function fillOutfits() {
 }
 // 上のボタンで開く画面：同じボタンをもう一度押すと閉じる。ほかの画面は閉じる（2026-11-21 先生）
 // 画面は modal にしないので、開いたままでも上のボタンを押せる。キャラクターの所を触っても閉じる
-const PANELS = [['pick', 'pickDlg'], ['motionBtn', 'motionDlg'], ['about', 'aboutDlg']];
+const PANELS = [['pick', 'pickDlg'], ['motionBtn', 'motionDlg'], ['lookBtn', 'lookDlg'], ['about', 'aboutDlg']];
 function closePanels(except) {
   for (const [btn, dlg] of PANELS) if (dlg !== except && $(dlg).open) $(dlg).close();
 }
@@ -212,7 +220,9 @@ for (const [btn, dlg] of PANELS) {
   $(dlg).addEventListener('close', () => $(btn).setAttribute('aria-expanded', 'false'));
   new MutationObserver(() => $(btn).setAttribute('aria-expanded', String($(dlg).open))).observe($(dlg), { attributes: true, attributeFilter: ['open'] });
 }
-canvas.addEventListener('pointerdown', () => closePanels(null));
+// 見た目の調整パネルは、キャラクターを見ながら動かすので、画面を触っても閉じない
+canvas.addEventListener('pointerdown', () => { for (const [, dlg] of PANELS) if (dlg !== 'lookDlg' && $(dlg).open) $(dlg).close(); });
+$('lookBtn').addEventListener('click', () => togglePanel('lookDlg', () => lookPanel.build()));
 
 $('pick').addEventListener('click', () => {
   if (!pack) return;
@@ -410,7 +420,7 @@ async function loadFromPC() {
 window.vroidApp = {
   loadArrayBuffer, frameView, camera, controls, usePack,
   get motion() { return motion; }, get pack() { return pack; }, get current() { return current; }, get vrm() { return vrm; },
-  get lastTouch() { return lastTouch; }, onTouch,
+  get lastTouch() { return lastTouch; }, onTouch, look,
 };
 
 // ---------- 描画のくり返し ----------
@@ -420,5 +430,5 @@ renderer.setAnimationLoop(() => {
   controls.update();
   if (motion) motion.update(dt);   // 姿勢・しぐさ・表情・目線（カメラが動いたあとに）
   updateStopButton();
-  renderer.render(scene, camera);
+  look.render();   // 立体視・画面全体の効果があればここで（なければ今までと同じ描き方）
 });

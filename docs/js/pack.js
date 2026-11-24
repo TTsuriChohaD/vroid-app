@@ -75,9 +75,16 @@ export async function buildPack(files) {
       try { touch = JSON.parse(await touchBlob.text()); }
       catch (e) { throw new Error(id + '/touch.json の書き方に誤りがあります（' + e.message + '）'); }
     }
+    // 見た目の設定（look.json。見た目の調整パネルの「書き出す」で作る。なくてもよい）
+    let look = null;
+    const lookBlob = byPath.get(pre + 'look.json');
+    if (lookBlob) {
+      try { look = JSON.parse(await lookBlob.text()); }
+      catch (e) { throw new Error(id + '/look.json の書き方に誤りがあります（' + e.message + '）'); }
+    }
     // 動きの設定（motions.json。同じ名前ならキャラクターの方を使う）
     const motionConf = { ...commonConf, ...(await readMotionConf(pre + 'motions/', id)) };
-    chars.push({ id, dir: pre, name: conf.name || id, outfits, pose: conf.pose || null, motions, motionConf, touch,
+    chars.push({ id, dir: pre, name: conf.name || id, outfits, pose: conf.pose || null, motions, motionConf, touch, look,
       expressions: conf.expressions || null,   // 表情の組み合わせ（例 { "shy": { "Blush": 1, "relaxed": 0.3 } }）
       springs: conf.springs || null });        // 揺れものの当たり判定（springs.js の SPRINGS を上書き）
   }
