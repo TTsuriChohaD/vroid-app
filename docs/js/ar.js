@@ -37,8 +37,8 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
     // 戻すときのために、今の見え方を覚える
     saved = { pos: camera.position.clone(), quat: camera.quaternion.clone(), fov: camera.fov, near: camera.near };
     placed = false; hitOk = false;
-    place.identity(); placeInv.identity();
-    rig.matrixAutoUpdate = false; rig.matrix.identity(); rig.matrixWorld.identity();
+    rig.matrixAutoUpdate = false;
+    park();   // 置くまでは床のずっと下（映らない所）で描き方を準備する
     scene.add(rig, reticle);
     rig.add(camera);
     camera.near = 0.03;
@@ -51,6 +51,19 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
     hitSource = await s.requestHitTestSource({ space: viewer });
     onStart && onStart({ overlay: !!s.domOverlayState });
     hint && hint('床を映してください。白い輪が出たら、タップするとそこに立ちます');
+  }
+
+  // 描き方の準備（2026-11-24 先生：白い輪をタップしても、すぐには出なかった）。
+  // 「画面の効果」を入れていると、ふだんは別の画面に描いてから仕上げるので、AR（画面に直接描く）用の描き方（シェーダー）が別に要る。
+  // 置くまで隠していると、タップした瞬間にその準備が始まり、スマホでは止まる（three の compileAsync で先に作っても、
+  // 最初に描くときの待ちは PC で減らなかった）→ AR を始めてすぐの WARM_FRAMES コマだけ、置く前のキャラクターを
+  // 床のずっと下（PARK_Y。カメラの遠さ 30 m より先なので映らない）に置いて実際に描き、準備を済ませておく
+  const PARK_Y = -100, WARM_FRAMES = 20;
+  let warm = 0;
+  function park() {
+    place.makeTranslation(0, PARK_Y, 0); placeInv.copy(place).invert();
+    rig.matrix.copy(placeInv); rig.matrixWorld.copy(placeInv); rig.matrixWorldNeedsUpdate = true;
+    warm = WARM_FRAMES;
   }
   function end() { if (session) session.end(); }
   function ended() {
@@ -111,7 +124,8 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
   function update(frame) {
     if (!session) return;
     const vrm = getVrm();
-    if (vrm) vrm.scene.visible = placed;
+    if (vrm) vrm.scene.visible = placed || warm > 0;   // 置く前は、準備の間だけ（映らない所で）描く
+    if (warm > 0) warm--;
     hitOk = false;
     if (frame && hitSource) {
       const hits = frame.getHitTestResults(hitSource);
@@ -120,7 +134,7 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
       if (pose) {
         hitOk = true;
         hitRoom.fromArray(pose.transform.matrix);
-        reticle.matrix.multiplyMatrices(placeInv, hitRoom);   // 部屋の座標 → キャラクターの座標（置く前は同じ）
+        reticle.matrix.multiplyMatrices(placeInv, hitRoom);   // 部屋の座標 → キャラクターの座標
         reticle.matrixWorldNeedsUpdate = true;
       }
     }

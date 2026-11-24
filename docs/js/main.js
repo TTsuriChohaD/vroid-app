@@ -449,7 +449,7 @@ async function loadFromPC() {
 
 // PC での確かめ用（内蔵ブラウザからモデルやフォルダを渡す）
 window.vroidApp = {
-  loadArrayBuffer, frameView, camera, controls, usePack,
+  loadArrayBuffer, frameView, camera, controls, usePack, renderer, scene,
   get motion() { return motion; }, get pack() { return pack; }, get current() { return current; }, get vrm() { return vrm; },
   get lastTouch() { return lastTouch; }, onTouch, look, get springTouch() { return springTouch; }, get ar() { return ar; },
 };
