@@ -44,6 +44,15 @@ export const WAVE = {
   happy: 0.6,                  // 振っている間の笑顔
 };
 
+// 頭をなでている間（2026-11-24 先生：頭がほんの少し手の方へ傾く・目を細める。喜ぶ動きや照れの表情はそのまま）
+export const STROKE = {
+  tilt: 0.07,     // 手の方へかしげる（rad）
+  yaw: 0.035,     // 手の方へ少し向く
+  nod: 0.03,      // 少しうつむく（手に頭をあずける）
+  squint: 0.3,    // 目を細める（relaxed の重み）
+  fadeSec: 0.3,   // 始め・終わりのなめらかさ（秒）
+};
+
 // 頭をなでられたとき
 export const PAT = {
   tilt: 0.13,     // 首をかしげる
@@ -116,7 +125,7 @@ export const FISTS = {
 
 // ---------- キャラクターごとの数値（character.json の "pose"）で上書きする ----------
 // 例：{ "CLASP": { "curl": 0.2, "head": [0.06, 0, 0.03] } }。書いていない数値は標準の値のまま
-const TABLES = { CLASP, BREATH, LOOK, WAVE, PAT, KNEES, HAND_MOTIONS, LEAN_WAVE, FISTS };
+const TABLES = { CLASP, BREATH, LOOK, WAVE, PAT, KNEES, HAND_MOTIONS, LEAN_WAVE, FISTS, STROKE };
 const DEFAULTS = JSON.parse(JSON.stringify(TABLES));
 export function setPoseOverrides(over) {
   for (const [name, table] of Object.entries(TABLES)) {
@@ -413,6 +422,12 @@ export function applyPose(vrm, t, s) {
   const h = CLASP.head.map((v) => v * stance);
   add(B('neck'), h[0] * 0.5 + lookPitch, h[1] * 0.5 + Math.sin(t * 0.5) * 0.03 + lookYaw * 0.5, h[2] * 0.5);
   add(B('head'), h[0] * 0.5 + lookPitch, h[1] * 0.5 + lookYaw * 0.5, h[2] * 0.5);
+
+  // なでている間：手の方へほんの少しかしげて向き、少しうつむく（strokeSide：+1＝手がキャラの左、−1＝右）
+  if (s.strokeW > 0) {
+    const w = s.strokeW, sd = s.strokeSide || 0;
+    add(B('head'), STROKE.nod * w, STROKE.yaw * sd * w, STROKE.tilt * sd * w);
+  }
 
   // なでられているとき（VRMA がないとき）：首を少しかしげ、小さくうなずく
   if (s.patW > 0) {

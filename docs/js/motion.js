@@ -8,7 +8,7 @@
 //   5. 腕・肩・指（入れ替える骨）は、コードの姿勢から VRMA の角度へ重み w で近づける ＝ ② 切り替える
 //   6. 表情・まばたき・目線（③ 見る先だけ決める）→ vrm.update()
 import * as THREE from 'three';
-import { applyPose, LOOK, WAVE, PAT, HAND_MOTIONS, FISTS } from './pose.js';
+import { applyPose, LOOK, WAVE, PAT, HAND_MOTIONS, FISTS, STROKE } from './pose.js';
 import { createPlayer } from './vrma.js';
 import { setBustSqueeze } from './springs.js';
 
@@ -94,6 +94,10 @@ export function createMotion(vrm, camera, { getMotion = async () => null, emotio
     return p < 0.5 ? p * 2 : 2 - p * 2;
   }
 
+  // 頭をなでている間（main.js が毎フレーム setStroke で知らせる）
+  const stroke = { on: false, side: 0 };
+  let strokeW = 0, strokeSide = 0;
+
   const snap = new Map();
   const snapHips = new THREE.Vector3();
   const qId = new THREE.Quaternion();
@@ -142,7 +146,11 @@ export function createMotion(vrm, camera, { getMotion = async () => null, emotio
       // ひざに置いた手を挙げて手を振る（再生を始めてからの時間で。ポーズで保っている間も時間は進む）。止めると体と一緒に下ろす
       if (hm.wave) { leanWaveW = Math.min(lin((player.time - hm.wave.start) / hm.wave.rise), hw); leanWaveSide = hm.wave.side; }
     }
-    applyPose(vrm, t, { lookW, lookP: idleP, waveW, patW: patByVRMA ? 0 : pw, patT: t - patAt, animW, blendShoulders, kneesW, fistsW, leanWaveW, leanWaveSide });
+    // 頭をなでている間の小さな反応（手の方へかしげる・目を細める）。なめらかに入れて、なめらかに戻す
+    strokeW += ((stroke.on ? 1 : 0) - strokeW) * (1 - Math.exp(-dt / Math.max(0.05, STROKE.fadeSec / 3)));
+    strokeSide += (stroke.side - strokeSide) * (1 - Math.exp(-dt / 0.15));
+    applyPose(vrm, t, { lookW, lookP: idleP, waveW, patW: patByVRMA ? 0 : pw, patT: t - patAt, animW, blendShoulders, kneesW, fistsW, leanWaveW, leanWaveSide,
+      strokeW, strokeSide });
     // 胸の前でグーの間だけ、胸を左右から寄せる（脇をしめて胸を寄せる）
     setBustSqueeze(vrm, fistsW, FISTS.bustSqueeze);
 
@@ -155,6 +163,7 @@ export function createMotion(vrm, camera, { getMotion = async () => null, emotio
       const target = {};
       const put = (n, w) => { if (hasExpr(n)) target[n] = Math.max(target[n] || 0, w); };
       put('happy', WAVE.happy * waveW);
+      put('relaxed', STROKE.squint * strokeW);   // なでている間は目を細める（照れ・にっこりの表情は重ねたまま）
       if (!patByVRMA && pw > 0 && !emo) put('happy', PAT.happy * pw);   // VRMA がないときの、なでられた表情
       if (emo && t < emo.until) for (const [n, w] of Object.entries(emo.weights)) put(n, w);
       // fadeSec でおよそ 95% まで移る速さ（感情の表情がないときは前と同じ速さ）
@@ -223,7 +232,10 @@ export function createMotion(vrm, camera, { getMotion = async () => null, emotio
   // 感情の表情を終える（fadeSec かけて戻る）。一覧から選んだ動きを止めたときなど
   function clearEmotion() { if (emo && emo.until > t) emo.until = t; }
 
-  return { update, pat, react, setEmotion, clearEmotion, startIdle, playMotion, stopMotion: () => player.stop(), releaseMotion: () => player.release(),
+  // on：なでているか、side：+1＝手がキャラの左・−1＝右
+  function setStroke(on, side) { stroke.on = !!on; if (on) stroke.side = side; }
+
+  return { update, pat, react, setEmotion, clearEmotion, setStroke, startIdle, playMotion, stopMotion: () => player.stop(), releaseMotion: () => player.release(),
     get playing() { return player.playing; }, get mode() { return player.mode; }, get releasing() { return player.releasing; },
     get busy() { return !!player.playing || idleType === 'wave'; } };
 }

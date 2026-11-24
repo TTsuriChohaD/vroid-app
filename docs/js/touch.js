@@ -82,7 +82,10 @@ export function regionAt(vrm, point) {
 
 // 指の操作を見分ける。onTouch(region, gesture) を呼ぶ
 // controls：OrbitControls（なでている間は止める）
-export function setupTouch({ canvas, camera, controls, getVrm, onTouch, onEmptyDoubleTap }) {
+// 揺れものの反応（springtouch.js）のために、触り始め・なでる動き・離すも知らせる（2026-11-24）：
+//   onPress({ point, region, side }, x, y)：キャラクターに触れた　onStrokeMove(x, y)：なでている指が動いた　onRelease()：離した・回す操作になった
+const noop = () => {};
+export function setupTouch({ canvas, camera, controls, getVrm, onTouch, onEmptyDoubleTap, onPress = noop, onStrokeMove = noop, onRelease = noop }) {
   const ray = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   const pointers = new Map();
@@ -99,15 +102,16 @@ export function setupTouch({ canvas, camera, controls, getVrm, onTouch, onEmptyD
     // キャラクターの左右（左手側がワールドの +X。腰からの向きで決める）
     const hips = vrm.humanoid.getNormalizedBoneNode('hips');
     const local = hips ? hips.worldToLocal(hits[0].point.clone()) : hits[0].point;
-    return { region: regionAt(vrm, hits[0].point), side: local.x > 0 ? 'left' : 'right' };
+    return { region: regionAt(vrm, hits[0].point), side: local.x > 0 ? 'left' : 'right', point: hits[0].point.clone() };
   }
 
   canvas.addEventListener('pointerdown', (e) => {
     pointers.set(e.pointerId, true);
-    if (pointers.size > 1) { endStroke(); g = null; return; }   // 2 本指は寄る・引く（今まで通り）
+    if (pointers.size > 1) { endStroke(); g = null; onRelease(); return; }   // 2 本指は寄る・引く（今まで通り）
     const h = hit(e.clientX, e.clientY);
     g = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), region: h && h.region, side: h && h.side, moved: 0, stroking: false,
           camPos: camera.position.clone(), camTarget: controls.target.clone() };
+    if (h) onPress(h, e.clientX, e.clientY);
   });
   canvas.addEventListener('pointermove', (e) => {
     if (!g || e.pointerId !== g.id) return;
@@ -121,7 +125,8 @@ export function setupTouch({ canvas, camera, controls, getVrm, onTouch, onEmptyD
     if (g.stroking) {
       g.path = (g.path || 0) + Math.hypot(e.movementX || 0, e.movementY || 0);
       if (!g.fired && g.moved > STROKE_PX) { g.fired = true; onTouch('head', 'stroke', g.side); }
-    }
+      onStrokeMove(e.clientX, e.clientY);
+    } else if (g.moved > TAP_PX && !g.released) { g.released = true; onRelease(); }   // 画面を回す操作になった → 揺れものからは手を離す
   });
   function endStroke(s = g) { if (s && s.stroking) controls.enabled = true; }
   const up = (e) => {
@@ -129,6 +134,7 @@ export function setupTouch({ canvas, camera, controls, getVrm, onTouch, onEmptyD
     if (!g || e.pointerId !== g.id) return;
     const s = g; g = null;
     endStroke(s);   // なでていたら、画面を回す操作を戻す
+    onRelease();
     if (s.stroking || s.moved > TAP_PX || performance.now() - s.t > TAP_MS) return;
     if (s.region) { onTouch(s.region, 'tap', s.side); lastTap = 0; return; }
     // キャラクターの外を 2 回タップ → 最初の見え方に戻す
@@ -136,7 +142,7 @@ export function setupTouch({ canvas, camera, controls, getVrm, onTouch, onEmptyD
     if (now - lastTap < 300) { onEmptyDoubleTap(); lastTap = 0; } else lastTap = now;
   };
   canvas.addEventListener('pointerup', up);
-  canvas.addEventListener('pointercancel', (e) => { pointers.delete(e.pointerId); if (g && e.pointerId === g.id) { endStroke(); g = null; } });
+  canvas.addEventListener('pointercancel', (e) => { pointers.delete(e.pointerId); if (g && e.pointerId === g.id) { endStroke(); g = null; onRelease(); } });
   // 念のため：指が 1 本も触れていないのに回す操作が止まったままなら戻す
   window.addEventListener('pointerup', () => { if (!g && !controls.enabled) controls.enabled = true; });
 

@@ -160,8 +160,9 @@ export function createLookPanel(root, look, { flash = () => {} } = {}) {
       slider('コントラスト', () => P.grade.contrast, (v) => { P.grade.contrast = v; }, 0.5, 1.6, 0.01),
     ));
     // 立体視（確かめ用）・FPS
-    root.append(section('重さの確認', null, null, openState['重さの確認'],
+    root.append(section('確認・重さ', null, null, openState['確認・重さ'],
       toggle('FPS を表示', () => S.fps, (v) => { S.fps = v; }),
+      toggle('揺れものの補助表示（当たり判定の球・揺れものの点。触れている所は橙）', () => S.springDebug, (v) => { S.springDebug = v; }),
       toggle('立体視（確かめ用：画面を左右に分ける）', () => S.stereo.on, (v) => { S.stereo.on = v; }),
       toggle('立体視のときは効果を軽く（ブルームを切る・にじみを半分の細かさで）', () => S.stereo.lite, (v) => { S.stereo.lite = v; }),
       slider('目の間隔（m）', () => S.stereo.eyeSep, (v) => { S.stereo.eyeSep = v; }, 0.02, 0.1, 0.001),

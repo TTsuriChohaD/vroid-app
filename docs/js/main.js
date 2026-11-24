@@ -12,6 +12,7 @@ import { loadVRMA, classifyVRMA } from './vrma.js';
 import { setupSprings } from './springs.js';
 import { createLook } from './look.js';
 import { createLookPanel } from './lookpanel.js';
+import { createSpringTouch } from './springtouch.js';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -69,10 +70,12 @@ function frameView() {
 // ---------- タッチ（touch.js）：部位としぐさ → touch.json（なければ標準）の反応 ----------
 // キャラクターの外を 2 回タップすると、最初の見え方に戻す
 const recent = [];   // くり返しを数える { region, at }
+// touch.json の反応（部位 → しぐさ）。springTouch（揺れものの数値）だけを書いた touch.json なら、反応は標準のまま
+const touchConf = (ch) => (ch && ch.touch && Object.keys(ch.touch).some((k) => k !== 'springTouch') ? ch.touch : DEFAULT_TOUCH);
 async function onTouch(region, gesture, side) {
   if (!motion) return;
   const ch = currentChar();
-  const conf = (ch && ch.touch) || DEFAULT_TOUCH;
+  const conf = touchConf(ch);
   let r = conf[region] && conf[region][gesture];
   if (!r && gesture === 'stroke') r = conf[region] && conf[region].tap;
   // 同じ部位に短い間に何度もふれたら、反応を変える
@@ -92,7 +95,12 @@ async function onTouch(region, gesture, side) {
   await motion.react(r);
 }
 let lastTouch = null;
-setupTouch({ canvas, camera, controls, getVrm: () => vrm, onTouch, onEmptyDoubleTap: frameView });
+setupTouch({ canvas, camera, controls, getVrm: () => vrm, onTouch, onEmptyDoubleTap: frameView,
+  // 揺れものが触り方に応じて揺れる（springtouch.js）：触れた所に見えない手、なでる向きに一時的な力
+  onPress: (h, x, y) => { if (springTouch) springTouch.press(h, x, y); },
+  onStrokeMove: (x, y) => { if (springTouch) springTouch.move(x, y); },
+  onRelease: () => { if (springTouch) springTouch.release(); } });
+let springTouch = null;
 
 // ---------- 読み込み ----------
 let vrm = null, motion = null;
@@ -118,6 +126,8 @@ async function loadArrayBuffer(ab, name) {
   const ch = currentCharFor || null;
   setupSprings(vrm, ch && ch.springs);   // 揺れもの（胸・スカート）が腕・手に当たるように。元の姿勢のうちに呼ぶ
   look.attach(vrm);                       // 見た目のテスト：材質の元の値を覚え、今の設定をかける（VRM ファイルは変えない）
+  if (springTouch) springTouch.setDebug(false, scene);
+  springTouch = createSpringTouch(vrm, camera, canvas, ch && ch.touch && ch.touch.springTouch);   // 数値は touch.json の springTouch で上書き
   lookPanel.useCharacter(ch ? ch.id : 'default', ch && ch.look);
   motion = createMotion(vrm, camera, { getMotion, emotions: { ...EMOTIONS, ...((ch && ch.expressions) || {}) } });   // 姿勢・しぐさ・表情・目線・VRMA
 
@@ -251,7 +261,7 @@ async function classifyAll(p) {
 let menuMotion = null;        // 一覧から再生している動きの名前（止めるボタンを出す）
 // 触ったときの反応に使う動き（自動で再生するので一覧に出さない）
 function touchMotionNames(ch) {
-  const conf = (ch && ch.touch) || DEFAULT_TOUCH, names = new Set();
+  const conf = touchConf(ch), names = new Set();
   const add = (m) => { if (!m || m.startsWith('code:')) return; if (m.includes('{side}')) { names.add(m.replace('{side}', 'left')); names.add(m.replace('{side}', 'right')); } else names.add(m); };
   for (const [k, v] of Object.entries(conf)) { if (k === 'repeat') add(v.motion); else for (const r of Object.values(v || {})) add(r && r.motion); }
   return names;
@@ -420,7 +430,7 @@ async function loadFromPC() {
 window.vroidApp = {
   loadArrayBuffer, frameView, camera, controls, usePack,
   get motion() { return motion; }, get pack() { return pack; }, get current() { return current; }, get vrm() { return vrm; },
-  get lastTouch() { return lastTouch; }, onTouch, look,
+  get lastTouch() { return lastTouch; }, onTouch, look, get springTouch() { return springTouch; },
 };
 
 // ---------- 描画のくり返し ----------
@@ -428,7 +438,17 @@ const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1);
   controls.update();
+  if (springTouch && vrm) {
+    springTouch.update(dt);   // 触れている間の力を揺れものに足し込む（vrm.update の前に）
+    // 頭をなでている間の小さな反応：手が頭のどちら側か（キャラの左＝+1）
+    let side = 0;
+    const hp = springTouch.handPoint, head = vrm.humanoid.getNormalizedBoneNode('head');
+    if (hp && head) side = Math.max(-1, Math.min(1, head.worldToLocal(hp.clone()).x / 0.06));
+    if (motion) motion.setStroke(springTouch.stroking, side);
+    springTouch.setDebug(!!look.settings.springDebug, scene);
+  }
   if (motion) motion.update(dt);   // 姿勢・しぐさ・表情・目線（カメラが動いたあとに）
+  if (springTouch) springTouch.updateDebug();
   updateStopButton();
   look.render();   // 立体視・画面全体の効果があればここで（なければ今までと同じ描き方）
 });

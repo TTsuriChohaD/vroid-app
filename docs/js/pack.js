@@ -15,7 +15,8 @@
 //                { "id": "hoodie", "name": "パーカー", "file": "hoodie.vrm" } ],
 //   "pose": { "CLASP": { "curl": 0.2 } },
 //   "expressions": { "shy": { "relaxed": 0.5, "happy": 0.2 } } }   ← 表情の組み合わせ（touch.js の EMOTIONS を上書き・追加）
-// touch.json の書き方は touch.js の DEFAULT_TOUCH と同じ
+// touch.json の書き方は touch.js の DEFAULT_TOUCH と同じ。"springTouch"：揺れものが触り方に応じて揺れる数値
+//   （springtouch.js の DEFAULT_SPRING_TOUCH と同じ名前。書いた数値だけ変わる。springTouch だけ書いた touch.json なら、反応は標準のまま）
 // motions/motions.json（common/motions/ とキャラクターの motions/ のどちらにも置ける。なくてもよい）：
 // { "jump": { "name": "ジャンプ", "type": "loop" },                        ← type：once（1 回）／loop（繰り返し）／pose（ポーズ）。
 //   "lean_forward": { "name": "前かがみ", "type": "pose", "holdAt": 1.1 },     書かなければ自動（長さ 0 → pose、始めと終わりが同じで短い → loop）

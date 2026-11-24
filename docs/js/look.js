@@ -23,6 +23,7 @@ export const LOOK_BASE = {
     grade: { on: true, exposure: 1, tone: 'linear', saturation: 1, contrast: 1 } },
   stereo: { on: false, lite: true, eyeSep: 0.064 },   // lite：立体視のときは効果を軽く（ブルームを切る）
   fps: false,
+  springDebug: false,   // 揺れものの補助表示（当たり判定の球と揺れものの点。springtouch.js）
 };
 
 // 最初の目安のプリセット（先生：逆光＋リムライト＋ブルーム＋やわらかい影）
