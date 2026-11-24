@@ -13,6 +13,7 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
   const place = new THREE.Matrix4();      // 置いた場所（部屋の座標）：位置とこちら向きの回転
   const placeInv = new THREE.Matrix4();
   let placed = false, session = null, hitSource = null, saved = null;
+  const viewerRoom = new THREE.Vector3();   // スマホの位置（部屋の座標。置くときにこちらを向かせる）
 
   // 床の印（白い輪）。キャラクターの座標で描く
   const reticle = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.13, 40).rotateX(-Math.PI / 2),
@@ -46,6 +47,12 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
     renderer.xr.setReferenceSpaceType('local');
     s.addEventListener('end', ended);
     s.addEventListener('select', onSelect);
+    document.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('pointerup', onUp, true);
+    for (const k in stats) stats[k] = 0;
+    dbg = document.createElement('div'); dbg.id = 'arDebug';
+    dbg.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:20;padding:4px 8px;border-radius:8px;background:#0008;color:#fff;font-size:12px;line-height:1.4;pointer-events:none';
+    document.body.append(dbg);
     await renderer.xr.setSession(s);
     const viewer = await s.requestReferenceSpace('viewer');
     hitSource = await s.requestHitTestSource({ space: viewer });
@@ -68,6 +75,9 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
   function end() { if (session) session.end(); }
   function ended() {
     session = null; hitSource = null; placed = false;
+    document.removeEventListener('pointerdown', onDown, true);
+    document.removeEventListener('pointerup', onUp, true);
+    if (dbg) { dbg.remove(); dbg = null; }
     rig.remove(camera); scene.remove(rig, reticle);
     renderer.xr.enabled = false;
     if (saved) {
@@ -80,7 +90,7 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
   }
 
   // 置く：床の印の場所に、こちら（スマホ）を向かせて立たせる
-  const _p = new THREE.Vector3(), _c = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(1, 1, 1);
+  const _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(1, 1, 1);
   function placeAtHit(viewerRoomPos) {
     _p.setFromMatrixPosition(hitRoom);
     const yaw = Math.atan2(viewerRoomPos.x - _p.x, viewerRoomPos.z - _p.z);
@@ -92,33 +102,52 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
   }
 
   // タップ（画面のボタン以外）。指の線がキャラクターに当たれば部位の反応、外なら床の印の所へ置き直す
+  // 受け取り方は 2 つ（2026-11-24 先生：白い輪をタップしても出なかった）：WebXR のタップ（select）と、ふつうの指の操作（ページ全体を
+  // 画面の上のボタンに使っているので、指の操作もページに届く）。同じタップを 2 回数えないよう、続けて来た方は捨てる
   const ray = new THREE.Raycaster();
-  function onSelect(e) {
+  const stats = { sel: 0, ptr: 0, placed: 0, react: 0, miss: 0 };
+  let handledAt = -1e9;
+  function handleTap(origin, dir, via) {
+    const now = performance.now();
+    stats[via]++;
+    if (now - handledAt < 400) return;   // もう一方の受け取り方で、同じタップを処理した
+    handledAt = now;
     onAnyTap && onAnyTap();
     const vrm = getVrm();
-    const ref = renderer.xr.getReferenceSpace();
-    const pose = e.frame && ref ? e.frame.getPose(e.inputSource.targetRaySpace, ref) : null;
-    if (placed && vrm && pose) {
-      // 部屋の座標の線 → キャラクターの座標へ
-      const m = new THREE.Matrix4().fromArray(pose.transform.matrix).premultiply(placeInv);
-      const o = new THREE.Vector3().setFromMatrixPosition(m);
-      const d = new THREE.Vector3(0, 0, -1).transformDirection(m);
-      ray.set(o, d);
+    if (placed && vrm && origin) {
+      ray.set(origin, dir);
       const hits = ray.intersectObject(vrm.scene, true).filter((h) => h.object.isMesh && h.object.visible);
       if (hits.length) {
         const h = hits[0];
         const hips = vrm.humanoid.getNormalizedBoneNode('hips');
         const local = hips ? hips.worldToLocal(h.point.clone()) : h.point;
+        stats.react++;
         onTap && onTap(regionFromSkin(vrm, h) || regionAt(vrm, h.point), local.x > 0 ? 'left' : 'right');
         return;
       }
     }
-    if (hitOk) {
-      const vp = e.frame && ref ? e.frame.getViewerPose(ref) : null;
-      const v = vp ? new THREE.Vector3().setFromMatrixPosition(new THREE.Matrix4().fromArray(vp.transform.matrix)) : new THREE.Vector3();
-      placeAtHit(v);
-    }
+    if (hitOk) { placeAtHit(viewerRoom); stats.placed++; }
+    else { stats.miss++; hint && hint('白い輪が見えているときにタップしてください'); }
   }
+  function onSelect(e) {
+    const ref = renderer.xr.getReferenceSpace();
+    const pose = e.frame && ref ? e.frame.getPose(e.inputSource.targetRaySpace, ref) : null;
+    if (!pose) { handleTap(null, null, 'sel'); return; }
+    // 部屋の座標の線 → キャラクターの座標へ
+    const m = new THREE.Matrix4().fromArray(pose.transform.matrix).premultiply(placeInv);
+    handleTap(new THREE.Vector3().setFromMatrixPosition(m), new THREE.Vector3(0, 0, -1).transformDirection(m), 'sel');
+  }
+  // ふつうの指の操作：ほとんど動かさずに離したらタップ。線はカメラ（キャラクターの座標。AR のレンズの写し方）から
+  const UI = 'button, label, select, input, dialog, .bar, #status, #arDebug';
+  let down = null;
+  const onDown = (e) => { down = (e.target.closest && e.target.closest(UI)) ? null : { x: e.clientX, y: e.clientY, t: performance.now() }; };
+  const onUp = (e) => {
+    const d = down; down = null;
+    if (!d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 12 || performance.now() - d.t > 600) return;
+    const ndc = new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    handleTap(ray.ray.origin.clone(), ray.ray.direction.clone(), 'ptr');
+  };
 
   // 毎フレーム（描く前に）：床の印を動かす。置く前はキャラクターを隠す
   function update(frame) {
@@ -127,6 +156,11 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
     if (vrm) vrm.scene.visible = placed || warm > 0;   // 置く前は、準備の間だけ（映らない所で）描く
     if (warm > 0) warm--;
     hitOk = false;
+    if (frame) {
+      const ref = renderer.xr.getReferenceSpace();
+      const vp = ref ? frame.getViewerPose(ref) : null;
+      if (vp) viewerRoom.set(vp.transform.position.x, vp.transform.position.y, vp.transform.position.z);
+    }
     if (frame && hitSource) {
       const hits = frame.getHitTestResults(hitSource);
       const ref = renderer.xr.getReferenceSpace();
@@ -139,7 +173,13 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
       }
     }
     reticle.visible = hitOk;
+    // 確認用の表示（AR の中、左下。うまく置けないときの手がかり。2026-11-24）
+    if (dbg && ++dbgN % 10 === 0) {
+      dbg.textContent = '輪 ' + (hitOk ? 'あり' : 'なし') + '　タップ ' + stats.sel + '/' + stats.ptr + '（XR/指）' +
+        '　置いた ' + stats.placed + '　反応 ' + stats.react + '　輪なし ' + stats.miss + '　' + (placed ? '立っている' : 'まだ');
+    }
   }
+  let dbg = null, dbgN = 0;
 
   return {
     supported, start, end, update,
