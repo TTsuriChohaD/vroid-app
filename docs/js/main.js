@@ -99,8 +99,29 @@ setupTouch({ canvas, camera, controls, getVrm: () => vrm, onTouch, onEmptyDouble
   // 揺れものが触り方に応じて揺れる（springtouch.js）：触れた所に見えない手、なでる向きに一時的な力
   onPress: (h, x, y) => { if (springTouch) springTouch.press(h, x, y); },
   onStrokeMove: (x, y) => { if (springTouch) springTouch.move(x, y); },
-  onRelease: () => { if (springTouch) springTouch.release(); } });
+  onRelease: () => { if (springTouch) springTouch.release(); },
+  getMode: () => touchMode });
 let springTouch = null;
+
+// 触れるモード／視点モード（右下のボタン 1 つで切り替える。2026-11-24 先生）。前に選んだ方を覚える
+const MODE_KEY = 'vroid-app-mode';
+let touchMode = (() => { try { return localStorage.getItem(MODE_KEY) === 'view' ? 'view' : 'touch'; } catch (_) { return 'touch'; } })();
+function showMode() {
+  const b = $('modeBtn');
+  b.dataset.mode = touchMode;
+  const t = touchMode === 'touch' ? '触れるモード（押すと視点モード）' : '視点モード（押すと触れるモード）';
+  b.title = t; b.setAttribute('aria-label', t);
+  $('modeLabel').textContent = touchMode === 'touch' ? '触れる' : '視点';
+}
+$('modeBtn').addEventListener('click', () => {
+  touchMode = touchMode === 'touch' ? 'view' : 'touch';
+  try { localStorage.setItem(MODE_KEY, touchMode); } catch (_) {}
+  if (springTouch) springTouch.release();
+  controls.enabled = true;
+  showMode();
+  flash(touchMode === 'touch' ? '触れるモード：キャラクターに触れると反応します（外から動かすと回ります）' : '視点モード：触っても反応しません。どこからでも回せます');
+});
+showMode();
 
 // ---------- 読み込み ----------
 let vrm = null, motion = null;

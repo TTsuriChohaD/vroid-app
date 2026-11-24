@@ -33,7 +33,59 @@ const SKIRT = { above: 0.04, belowLegTop: 0.08 };
 const TAP_PX = 10, TAP_MS = 500;
 const FACE_TOP = 0.01;  // 顔（ほお）の上の端：目の骨より何 m 上まで（それより上のおでこ・前髪は頭）
 
-// 当たった点が体のどこか
+// 当たった点が体のどこか（2026-11-24 先生：触れているものと反応が合わない所がある → 高さ・幅で決めるのをやめ、
+// 「触れた三角形の肌がどの骨で動くか」で決める。モデル自身の骨の割り当てを使うので、体格や服が変わっても合う）
+// hit：three の当たり（object・face・point）。肌の割り当てが読めないときは null（下の regionAt で決める）
+export function regionFromSkin(vrm, hit) {
+  const m = hit && hit.object;
+  if (!m || !m.isSkinnedMesh || !hit.face) return null;
+  const si = m.geometry.attributes.skinIndex, sw = m.geometry.attributes.skinWeight;
+  if (!si || !sw) return null;
+  // 三角形の 3 つの点の重みを骨ごとに足して、いちばん重い骨
+  const w = new Map();
+  for (const v of [hit.face.a, hit.face.b, hit.face.c]) {
+    for (let k = 0; k < 4; k++) {
+      const wt = sw.getComponent(v, k); if (wt <= 0) continue;
+      const b = m.skeleton.bones[si.getComponent(v, k)]; if (b) w.set(b, (w.get(b) || 0) + wt);
+    }
+  }
+  let bone = null, bw = 0;
+  for (const [b, x] of w) if (x > bw) { bw = x; bone = b; }
+  if (!bone) return null;
+  // 揺れものの骨（名前で）
+  if (/Hair/i.test(bone.name)) return 'head';
+  if (/Bust/i.test(bone.name)) return 'chest';
+  if (/Skirt/i.test(bone.name)) return 'skirt';
+  if (/Sleeve/i.test(bone.name)) return 'shoulder';
+  // 体の骨（VRM の人型の名前に直す。揺れものなどは親をたどる）
+  const raw = new Map();
+  for (const n of Object.keys(vrm.humanoid.humanBones)) { const r = vrm.humanoid.getRawBoneNode(n); if (r) raw.set(r, n); }
+  let name = null;
+  for (let p = bone; p && !name; p = p.parent) name = raw.get(p) || null;
+  if (!name) return null;
+  const P = hit.point;
+  const wp = (n) => { const b = vrm.humanoid.getNormalizedBoneNode(n); return b ? b.getWorldPosition(new THREE.Vector3()) : null; };
+  const mat = [].concat(m.material || [])[hit.face.materialIndex || 0] || [].concat(m.material || [])[0];
+  if (/^(head|jaw|leftEye|rightEye)$/.test(name)) {
+    if (mat && /_HAIR/i.test(mat.name)) return 'head';
+    // 顔：目の高さより下＝ほお、上（おでこ）＝頭（2026-11-20 先生）
+    const head = vrm.humanoid.getNormalizedBoneNode('head'), eye = wp('leftEye') || wp('rightEye');
+    const faceTop = (eye ? head.worldToLocal(eye.clone()).y : 0.06) + FACE_TOP;
+    return head.worldToLocal(P.clone()).y < faceTop ? 'cheek' : 'head';
+  }
+  if (name === 'neck' || name === 'spine') return 'body';
+  // 上胸の骨で動く肌はのどの下まであるので、首の付け根より上（のど）は「体」（胸の高さの上限は前と同じ 首 −0.03 m）
+  if (name === 'upperChest') { const n = wp('neck'); return n && P.y > n.y - 0.03 ? 'body' : 'chest'; }
+  if (name === 'chest') { const c = wp('chest'); return c && P.y > c.y + 0.03 ? 'chest' : 'body'; }
+  if (/Shoulder$|UpperArm$/.test(name)) return 'shoulder';
+  if (/Hand$|Thumb|Index|Middle|Ring|Little/.test(name)) return 'hand';
+  if (/LowerArm$/.test(name)) { const h = wp(name.replace('LowerArm', 'Hand')); return h && h.distanceTo(P) < 0.08 ? 'hand' : 'body'; }
+  if (name === 'hips') return 'skirt';
+  if (/UpperLeg$/.test(name)) { const t = wp(name); return t && P.y > t.y - SKIRT.belowLegTop ? 'skirt' : 'body'; }
+  return 'body';   // すね・足など
+}
+
+// 当たった点が体のどこか（骨の位置と高さで決める、前のやり方。肌の割り当てが読めないモデル用）
 export function regionAt(vrm, point) {
   const B = (n) => vrm.humanoid.getNormalizedBoneNode(n);
   const P = point;
@@ -85,7 +137,10 @@ export function regionAt(vrm, point) {
 // 揺れものの反応（springtouch.js）のために、触り始め・なでる動き・離すも知らせる（2026-11-24）：
 //   onPress({ point, region, side }, x, y)：キャラクターに触れた　onStrokeMove(x, y)：なでている指が動いた　onRelease()：離した・回す操作になった
 const noop = () => {};
-export function setupTouch({ canvas, camera, controls, getVrm, onTouch, onEmptyDoubleTap, onPress = noop, onStrokeMove = noop, onRelease = noop }) {
+// getMode()：'touch'（触れるモード）／'view'（視点モード）。2026-11-24 先生：パープル自体の回転と触れる動作がぶつかって動かしづらい
+//   touch：キャラクターに触れた指では画面を回さない（触る・なでる専用）。キャラクターの外から動かせば今まで通り回す
+//   view ：触っても反応しない。どこからでも回す・寄る
+export function setupTouch({ canvas, camera, controls, getVrm, onTouch, onEmptyDoubleTap, onPress = noop, onStrokeMove = noop, onRelease = noop, getMode = () => 'touch' }) {
   const ray = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   const pointers = new Map();
@@ -102,33 +157,36 @@ export function setupTouch({ canvas, camera, controls, getVrm, onTouch, onEmptyD
     // キャラクターの左右（左手側がワールドの +X。腰からの向きで決める）
     const hips = vrm.humanoid.getNormalizedBoneNode('hips');
     const local = hips ? hips.worldToLocal(hits[0].point.clone()) : hits[0].point;
-    return { region: regionAt(vrm, hits[0].point), side: local.x > 0 ? 'left' : 'right', point: hits[0].point.clone() };
+    return { region: regionFromSkin(vrm, hits[0]) || regionAt(vrm, hits[0].point), side: local.x > 0 ? 'left' : 'right', point: hits[0].point.clone() };
   }
 
   canvas.addEventListener('pointerdown', (e) => {
     pointers.set(e.pointerId, true);
     if (pointers.size > 1) { endStroke(); g = null; onRelease(); return; }   // 2 本指は寄る・引く（今まで通り）
-    const h = hit(e.clientX, e.clientY);
+    const h = getMode() === 'touch' ? hit(e.clientX, e.clientY) : null;   // 視点モードでは触れない
     g = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), region: h && h.region, side: h && h.side, moved: 0, stroking: false,
           camPos: camera.position.clone(), camTarget: controls.target.clone() };
-    if (h) onPress(h, e.clientX, e.clientY);
+    if (h) {
+      // 触れるモードでキャラクターに触れた指は、画面を回さない（OrbitControls は先に指を受け取っているので、ここで止める）
+      controls.enabled = false; g.hold = true;
+      onPress(h, e.clientX, e.clientY);
+    }
   });
   canvas.addEventListener('pointermove', (e) => {
     if (!g || e.pointerId !== g.id) return;
     g.moved = Math.max(g.moved, Math.hypot(e.clientX - g.x, e.clientY - g.y));
-    // 頭の上から動かし始めた → なでる。画面は回さない（動き始めに少し回った分は戻す）
-    if (!g.stroking && g.region === 'head' && g.moved > TAP_PX) {
+    // キャラクターの上から動かし始めた → なでる（頭なら「なでる」の反応も）。揺れものは指に合わせて動く
+    if (!g.stroking && g.region && g.moved > TAP_PX) {
       g.stroking = true;
-      controls.enabled = false;
       camera.position.copy(g.camPos); controls.target.copy(g.camTarget); controls.update();
     }
     if (g.stroking) {
       g.path = (g.path || 0) + Math.hypot(e.movementX || 0, e.movementY || 0);
-      if (!g.fired && g.moved > STROKE_PX) { g.fired = true; onTouch('head', 'stroke', g.side); }
+      if (!g.fired && g.region === 'head' && g.moved > STROKE_PX) { g.fired = true; onTouch('head', 'stroke', g.side); }
       onStrokeMove(e.clientX, e.clientY);
-    } else if (g.moved > TAP_PX && !g.released) { g.released = true; onRelease(); }   // 画面を回す操作になった → 揺れものからは手を離す
+    }
   });
-  function endStroke(s = g) { if (s && s.stroking) controls.enabled = true; }
+  function endStroke(s = g) { if (s && (s.stroking || s.hold)) controls.enabled = true; }
   const up = (e) => {
     pointers.delete(e.pointerId);
     if (!g || e.pointerId !== g.id) return;
