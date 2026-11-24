@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AR の試し</title>
+<style>
+  :root { --bg: #eef3f8; --fg: #1f2a36; --sub: #5a6878; --line: #b9c7d6; --card: #ffffff; --accent: #3b7bd8; --ok: #1e8449; --ng: #c0392b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161c24; --fg: #e8eef5; --sub: #9aa9ba; --line: #3d4a5c; --card: #222b37; --accent: #6aa3f0; --ok: #58d68d; --ng: #ff7a6b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg);
+         font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans JP", sans-serif; line-height: 1.6; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { margin: 0 0 12px; color: var(--sub); font-size: 14px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin: 0 0 14px; }
+  h2 { font-size: 16px; margin: 0 0 8px; }
+  ol { margin: 0; padding-left: 20px; font-size: 14px; }
+  .btn { display: inline-flex; align-items: center; min-height: 44px; padding: 0 18px; border: 0; border-radius: 22px;
+         background: var(--accent); color: #fff; font-size: 15px; cursor: pointer; }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+  .res { margin-top: 10px; font-size: 14px; white-space: pre-wrap; word-break: break-all; }
+  .ok { color: var(--ok); } .ng { color: var(--ng); }
+  a { color: var(--accent); }
+  canvas { display: none; }
+  /* AR の間だけ、カメラの映像の上に出す（DOM オーバーレイ） */
+  #overlay { display: none; position: fixed; inset: 0; pointer-events: none;
+             font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans JP", sans-serif; color: #fff; }
+  #overlay .bar { position: absolute; left: 12px; right: 12px; top: 12px; display: flex; gap: 8px; align-items: flex-start; }
+  #overlay .msg { flex: 1; background: rgba(0, 0, 0, 0.55); border-radius: 10px; padding: 8px 10px; font-size: 14px; line-height: 1.5; white-space: pre-line; }
+  #overlay button { pointer-events: auto; min-height: 44px; padding: 0 14px; border: 0; border-radius: 22px;
+                    background: rgba(255, 255, 255, 0.92); color: #1f2a36; font-size: 15px; }
+  #overlay .bottom { position: absolute; left: 12px; right: 12px; bottom: 16px; display: flex; gap: 8px; justify-content: center; }
+</style>
+</head>
+<body>
+<h1>AR の試し</h1>
+<p>このスマホの Chrome で AR（カメラの映像の上に 3D を置く）ができるかを試すページです。キャラクターは使いません。カメラの映像は画面に出すだけで、保存も送信もしません。</p>
+
+<section>
+  <h2>この Chrome でできること</h2>
+  <div class="res" id="support">調べています…</div>
+</section>
+
+<section>
+  <h2>試し方</h2>
+  <ol>
+    <li>「AR を始める」を押す（カメラの許可を聞かれたら許可する）</li>
+    <li>スマホをゆっくり動かして床を映す → 床が見つかると白い輪が出る</li>
+    <li>画面をタップ → その場所に、パープルと同じ背の高さ（1.4 m）の目印を置く</li>
+    <li>まわりを歩いて、床に立って見えるか・影・動きのなめらかさ（画面上の FPS）を見る</li>
+    <li>「終わる」で戻ると、下に結果が出ます</li>
+  </ol>
+  <p style="margin-top:10px"><button class="btn" id="start" disabled>AR を始める</button></p>
+  <div class="res" id="result"></div>
+</section>
+
+<p><a href="./">VRM ビューアに戻る</a></p>
+
+<div id="overlay">
+  <div class="bar">
+    <div class="msg" id="msg">床を探しています。スマホをゆっくり動かして床を映してください。</div>
+    <button id="end">終わる</button>
+  </div>
+  <div class="bottom">
+    <button id="size">大きさ：実寸</button>
+    <button id="clear">消す</button>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+const $ = (id) => document.getElementById(id);
+const log = { supported: null, domOverlay: null, features: [], floorFound: false, placed: 0, fpsMin: null, fpsAvg: null, error: null };
+
+// ---- 使えるかを調べる ----
+async function probe() {
+  const lines = [];
+  const xr = navigator.xr;
+  lines.push(['WebXR（navigator.xr）', !!xr]);
+  lines.push(['安全な接続（HTTPS）', window.isSecureContext]);
+  let ar = false;
+  if (xr) { try { ar = await xr.isSessionSupported('immersive-ar'); } catch (e) { ar = false; } }
+  log.supported = ar;
+  lines.push(['AR（immersive-ar）', ar]);
+  $('support').innerHTML = lines.map(([k, v]) => `${k}：<span class="${v ? 'ok' : 'ng'}">${v ? 'あり' : 'なし'}</span>`).join('\n') +
+    `\n画面：${innerWidth}×${innerHeight}、画素の細かさ ${devicePixelRatio}` +
+    (ar ? '' : '\n<span class="ng">この Chrome では AR を始められません（PC では「なし」になります）</span>');
+  $('start').disabled = !ar;
+}
+probe();
+
+// ---- 3D ----
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.xr.enabled = true;
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.01, 30);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x8899aa, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+sun.position.set(0.6, 2.5, 0.8);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+Object.assign(sun.shadow.camera, { left: -1.5, right: 1.5, top: 1.5, bottom: -1.5, near: 0.1, far: 6 });
+scene.add(sun, sun.target);
+
+// 床の印（白い輪）
+const reticle = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.13, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+reticle.matrixAutoUpdate = false;
+reticle.visible = false;
+scene.add(reticle);
+
+// 置く目印：パープルと同じ背の高さ 1.4 m（体＋頭）、床の円、こちら向きの印（鼻）。影を落とす床（影だけ見える）
+function makeMarker() {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: 0x8a5cd0, roughness: 0.6 });
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.16, 1.15, 24), mat);
+  body.position.y = 0.575;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.11, 24, 16), mat);
+  head.position.y = 1.29;
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.03, 0.08, 12).rotateX(Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0xffb0c8 }));
+  nose.position.set(0, 1.29, 0.13);
+  const base = new THREE.Mesh(new THREE.CircleGeometry(0.25, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 }));
+  base.position.y = 0.002;
+  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(3, 3).rotateX(-Math.PI / 2), new THREE.ShadowMaterial({ opacity: 0.3 }));
+  shadow.receiveShadow = true;
+  for (const m of [body, head, nose]) m.castShadow = true;
+  g.add(body, head, nose, base, shadow);
+  return g;
+}
+const markers = [];
+const SIZES = [[1, '実寸'], [0.5, '半分'], [0.25, '机の上']];
+let sizeIdx = 0;
+
+// ---- AR を始める・終わる ----
+let hitSource = null, session = null;
+$('start').addEventListener('click', async () => {
+  log.error = null;
+  try {
+    session = await navigator.xr.requestSession('immersive-ar', {
+      requiredFeatures: ['hit-test'],
+      optionalFeatures: ['dom-overlay', 'light-estimation'],
+      domOverlay: { root: $('overlay') },
+    });
+  } catch (e) { log.error = 'AR を始められませんでした：' + e.message; showResult(); return; }
+  log.domOverlay = session.domOverlayState ? session.domOverlayState.type : null;
+  log.features = session.enabledFeatures ? [...session.enabledFeatures] : [];
+  $('overlay').style.display = 'block';
+  renderer.xr.setReferenceSpaceType('local');
+  await renderer.xr.setSession(session);
+  const viewer = await session.requestReferenceSpace('viewer');
+  hitSource = await session.requestHitTestSource({ space: viewer });
+  session.addEventListener('select', onSelect);
+  session.addEventListener('end', onEnd);
+  fps.reset();
+});
+$('end').addEventListener('click', () => session && session.end());
+function onEnd() {
+  hitSource = null; session = null;
+  $('overlay').style.display = 'none';
+  reticle.visible = false;
+  showResult();
+}
+// 画面上のボタンを押したときは「タップで置く」にしない
+for (const id of ['end', 'size', 'clear']) $(id).addEventListener('beforexrselect', (e) => e.preventDefault());
+$('size').addEventListener('click', () => {
+  sizeIdx = (sizeIdx + 1) % SIZES.length;
+  const [s, name] = SIZES[sizeIdx];
+  $('size').textContent = '大きさ：' + name;
+  for (const m of markers) m.scale.setScalar(s);
+});
+$('clear').addEventListener('click', () => { for (const m of markers) scene.remove(m); markers.length = 0; });
+
+// タップ：床の輪のところに目印を置き、こちらを向かせる
+const tmpPos = new THREE.Vector3(), camPos = new THREE.Vector3();
+function onSelect() {
+  if (!reticle.visible) return;
+  const m = makeMarker();
+  tmpPos.setFromMatrixPosition(reticle.matrix);
+  m.position.copy(tmpPos);
+  renderer.xr.getCamera().getWorldPosition(camPos);
+  m.rotation.y = Math.atan2(camPos.x - tmpPos.x, camPos.z - tmpPos.z);
+  m.scale.setScalar(SIZES[sizeIdx][0]);
+  scene.add(m); markers.push(m);
+  log.placed++;
+  sun.target.position.copy(tmpPos); sun.position.copy(tmpPos).add(new THREE.Vector3(0.6, 2.5, 0.8));
+}
+
+// ---- FPS ----
+const fps = {
+  frames: 0, t0: 0, samples: [],
+  reset() { this.frames = 0; this.t0 = performance.now(); this.samples = []; },
+  tick() {
+    this.frames++;
+    const now = performance.now();
+    if (now - this.t0 >= 1000) { this.samples.push(this.frames * 1000 / (now - this.t0)); this.frames = 0; this.t0 = now; return true; }
+    return false;
+  },
+};
+
+// ---- 毎フレーム ----
+renderer.setAnimationLoop((t, frame) => {
+  if (frame && hitSource) {
+    const hits = frame.getHitTestResults(hitSource);
+    if (hits.length) {
+      const pose = hits[0].getPose(renderer.xr.getReferenceSpace());
+      reticle.visible = true;
+      reticle.matrix.fromArray(pose.transform.matrix);
+      log.floorFound = true;
+    } else reticle.visible = false;
+    if (fps.tick()) {
+      const now = fps.samples[fps.samples.length - 1];
+      $('msg').textContent = (reticle.visible ? '床が見つかりました。タップすると目印を置きます。' : '床を探しています。スマホをゆっくり動かして床を映してください。') +
+        `\nFPS ${now.toFixed(0)}　置いた数 ${markers.length}`;
+    }
+  }
+  renderer.render(scene, camera);
+});
+
+// ---- 結果 ----
+function showResult() {
+  const s = fps.samples.slice(1);   // 最初の 1 秒は始まったばかりなので除く
+  const yes = (v) => `<span class="${v ? 'ok' : 'ng'}">${v ? 'できた' : 'できなかった'}</span>`;
+  const lines = [];
+  if (log.error) lines.push(`<span class="ng">${log.error}</span>`);
+  else {
+    lines.push('AR を始める：' + yes(true));
+    lines.push('画面の上にボタンを出す（DOM オーバーレイ）：' + yes(!!log.domOverlay) + (log.domOverlay ? `（${log.domOverlay}）` : ''));
+    lines.push('床を見つける：' + yes(log.floorFound));
+    lines.push('目印を置いた数：' + log.placed);
+    if (s.length) lines.push(`FPS：平均 ${(s.reduce((a, b) => a + b, 0) / s.length).toFixed(0)}、いちばん低い ${Math.min(...s).toFixed(0)}（${s.length} 秒分）`);
+    lines.push('使えた機能：' + (log.features.length ? log.features.join('、') : '（分からない）'));
+  }
+  $('result').innerHTML = lines.join('\n');
+}
+</script>
+</body>
+</html>
