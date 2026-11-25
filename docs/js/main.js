@@ -481,6 +481,13 @@ const ar = createAR({
     setStatus('');
   },
   hint: (t) => setStatus(t),
+  onPlacingChange: (on) => { $('placeBtn').classList.toggle('on', on); },
+});
+// 置き直す（AR の間だけ出る）：押すと白い輪が出て、タップした所へ移る。もう一度押すとやめる（まだ置いていなければやめない）
+$('placeBtn').addEventListener('click', () => {
+  if (!ar.active) return;
+  closePanels();
+  ar.setPlacing(!ar.placing || !ar.placed);
 });
 let arOk = false;
 ar.supported().then((ok) => { arOk = ok; showArBtn(); });

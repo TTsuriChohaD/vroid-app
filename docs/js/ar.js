@@ -3,16 +3,18 @@
 // ・キャラクターは原点に置いたまま動かさない。かわりにカメラを「台（rig）」に載せ、台をずらして
 //   キャラクターが床の上に立って見えるようにする（姿勢の計算・揺れもの・タッチの部位分けをそのまま使えるように）。
 //   three の WebXRManager は、カメラに親があれば XR のカメラにも親の位置・向きを掛ける
-// ・床の白い輪をタップ → そこに実寸で置き、こちらを向かせる。キャラクターにふれたら部位の反応、外をタップしたら置き直す
+// ・床の白い輪をタップ → そこに実寸で置き、こちらを向かせる。キャラクターにふれたら部位の反応
+// ・置き直しはモードで分ける（2026-11-25 先生）：ふだんは白い輪を出さず、外をタップしても何もしない。
+//   「置き直す」を押すと白い輪が出て、タップした所へ移り、移ったら自動でふだんに戻る。始めた直後は置き直しの状態
 import * as THREE from 'three';
 import { regionFromSkin, regionAt } from './touch.js';
 
-export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onStart, onEnd, hint, onPress, onStrokeMove, onRelease, onStroke }) {
+export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onStart, onEnd, hint, onPress, onStrokeMove, onRelease, onStroke, onPlacingChange }) {
   const rig = new THREE.Group();   // カメラの台（キャラクターから見た、実際の部屋の置き方の逆）
   rig.name = 'vroidApp_arRig';
   const place = new THREE.Matrix4();      // 置いた場所（部屋の座標）：位置とこちら向きの回転
   const placeInv = new THREE.Matrix4();
-  let placed = false, session = null, hitSource = null, saved = null;
+  let placed = false, placing = false, session = null, hitSource = null, saved = null;
   const viewerRoom = new THREE.Vector3();   // スマホの位置（部屋の座標。置くときにこちらを向かせる）
 
   // 床の印（白い輪）。キャラクターの座標で描く
@@ -50,12 +52,12 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
     document.addEventListener('pointerdown', onDown, true);
     document.addEventListener('pointermove', onMove, true);
     document.addEventListener('pointerup', onUp, true);
-    document.addEventListener('pointercancel', onUp, true);
+    document.addEventListener('pointercancel', onCancel, true);
     await renderer.xr.setSession(s);
     const viewer = await s.requestReferenceSpace('viewer');
     hitSource = await s.requestHitTestSource({ space: viewer });
     onStart && onStart({ overlay: !!s.domOverlayState });
-    hint && hint('床を映してください。白い輪が出たら、タップするとそこに立ちます');
+    setPlacing(true);
   }
 
   // 描き方の準備（2026-11-24 先生：白い輪をタップしても、すぐには出なかった）。
@@ -76,7 +78,8 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
     document.removeEventListener('pointerdown', onDown, true);
     document.removeEventListener('pointermove', onMove, true);
     document.removeEventListener('pointerup', onUp, true);
-    document.removeEventListener('pointercancel', onUp, true);
+    document.removeEventListener('pointercancel', onCancel, true);
+    placing = false;
     if (down && down.hit) onRelease && onRelease();
     down = null;
     rig.remove(camera); scene.remove(rig, reticle);
@@ -99,10 +102,18 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
     place.compose(_p, _q, _s); placeInv.copy(place).invert();
     rig.matrix.copy(placeInv); rig.matrixWorld.copy(placeInv); rig.matrixWorldNeedsUpdate = true;
     placed = true;
-    hint && hint('');
+    setPlacing(false);   // 移ったら、ふだん（触れる）に戻る
+  }
+  // 置き直しのモード：白い輪を出し、タップで置く
+  function setPlacing(on) {
+    if (!session) return;
+    placing = !!on;
+    if (placing && down && down.hit) { onRelease && onRelease(); down = null; }
+    hint && hint(placing ? '床を映してください。白い輪が出たら、タップするとそこに立ちます' : '');
+    onPlacingChange && onPlacingChange(placing);
   }
 
-  // タップ（画面のボタン以外）。指の線がキャラクターに当たれば部位の反応、外なら床の印の所へ置き直す
+  // タップ（画面のボタン以外）。置き直しの間は白い輪の所へ置く。ふだんは、指の線がキャラクターに当たれば部位の反応（外は何もしない）
   // 受け取り方は 2 つ（2026-11-24 先生：白い輪をタップしても出なかった）：WebXR のタップ（select）と、ふつうの指の操作（ページ全体を
   // 画面の上のボタンに使っているので、指の操作もページに届く）。同じタップを 2 回数えないよう、続けて来た方は捨てる
   const ray = new THREE.Raycaster();
@@ -112,6 +123,11 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
     if (now - handledAt < 400) return;   // もう一方の受け取り方で、同じタップを処理した
     handledAt = now;
     onAnyTap && onAnyTap();
+    if (placing) {
+      if (hitOk) placeAtHit(viewerRoom);
+      else hint && hint('白い輪が見えているときにタップしてください');
+      return;
+    }
     const vrm = getVrm();
     if (placed && vrm && origin) {
       ray.set(origin, dir);
@@ -124,8 +140,6 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
         return;
       }
     }
-    if (hitOk) placeAtHit(viewerRoom);
-    else { hint && hint('白い輪が見えているときにタップしてください'); }
   }
   function onSelect(e) {
     // 指の操作の途中・直後に来た XR のタップは捨てる（なでた指を離したときに、タップや置き直しにならないように）
@@ -149,7 +163,7 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
   }
   function hitAt(x, y) {
     const vrm = getVrm();
-    if (!placed || !vrm) return null;
+    if (!placed || placing || !vrm) return null;
     const hits = screenRay(x, y).intersectObject(vrm.scene, true).filter((h) => h.object.isMesh && h.object.visible);
     if (!hits.length) return null;
     const h = hits[0];
@@ -179,6 +193,13 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
     const r = screenRay(e.clientX, e.clientY);
     handleTap(r.ray.origin.clone(), r.ray.direction.clone(), 'ptr');
   };
+  // 指の操作がブラウザに引き取られた（画面の移動など）：離した扱い。タップにはしない
+  const onCancel = (e) => {
+    const d = down;
+    if (!d || e.pointerId !== d.id) return;
+    down = null; lastUpAt = performance.now();
+    if (d.hit) onRelease && onRelease();
+  };
 
   // 毎フレーム（描く前に）：床の印を動かす。置く前はキャラクターを隠す
   function update(frame) {
@@ -203,11 +224,11 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
         reticle.matrixWorldNeedsUpdate = true;
       }
     }
-    reticle.visible = hitOk;
+    reticle.visible = hitOk && placing;
   }
 
   return {
-    supported, start, end, update,
-    get active() { return !!session; }, get placed() { return placed; },
+    supported, start, end, update, setPlacing,
+    get active() { return !!session; }, get placed() { return placed; }, get placing() { return placing; },
   };
 }
