@@ -9,13 +9,66 @@
 import * as THREE from 'three';
 import { regionFromSkin, regionAt } from './touch.js';
 
-export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onStart, onEnd, hint, onPress, onStrokeMove, onRelease, onStroke, onPlacingChange }) {
+// 大きさ（2026-11-25 先生）：実寸・半分・机の上。キャラクターの大きさは変えず、台に倍率を掛けて見え方だけ小さくする
+// （台＝置いた場所×倍率の逆。姿勢の計算・揺れもの・タッチはそのまま。奥行きも部屋の長さのままになる）
+export const AR_SIZES = [[1, '実寸'], [0.5, '半分'], [0.25, '机の上']];
+// 足元の影（2026-11-25 先生）：光から影を計算すると、スマホではキャラクターをもう一度描くほど重いので、
+// 足元にうっすらした丸い影を敷く。腰と両足の位置から毎コマ形を決め、足が床から離れるほど薄くする（ジャンプ）
+export const AR_SHADOW = { opacity: 0.38, margin: 0.14, minR: 0.22, baseY: 0.04, fadeH: 0.2 };
+
+export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onStart, onEnd, hint, onPress, onStrokeMove, onRelease, onStroke, onPlacingChange, size = 1 }) {
   const rig = new THREE.Group();   // カメラの台（キャラクターから見た、実際の部屋の置き方の逆）
   rig.name = 'vroidApp_arRig';
   const place = new THREE.Matrix4();      // 置いた場所（部屋の座標）：位置とこちら向きの回転
   const placeInv = new THREE.Matrix4();
   let placed = false, placing = false, session = null, hitSource = null, saved = null;
   const viewerRoom = new THREE.Vector3();   // スマホの位置（部屋の座標。置くときにこちらを向かせる）
+  const anchor = new THREE.Vector3(), anchorQ = new THREE.Quaternion();   // 置いた場所と向き（部屋の座標）
+  let scale = size;
+
+  // 足元の影（キャラクターの座標の床 y 0 に敷く）
+  const shadowTex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g = c.getContext('2d'), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    gr.addColorStop(0, 'rgba(0,0,0,1)'); gr.addColorStop(0.45, 'rgba(0,0,0,0.6)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+    return new THREE.CanvasTexture(c);
+  })();
+  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: AR_SHADOW.opacity, toneMapped: false }));
+  shadow.name = 'vroidApp_arShadow'; shadow.renderOrder = -1; shadow.visible = false;
+  const _b = new THREE.Vector3();
+  function updateShadow() {
+    const vrm = getVrm();
+    shadow.visible = !!(vrm && placed);
+    if (!shadow.visible) return;
+    const pts = [];
+    for (const n of ['hips', 'leftFoot', 'rightFoot', 'leftToes', 'rightToes', 'leftLowerLeg', 'rightLowerLeg']) {
+      const b = vrm.humanoid.getNormalizedBoneNode(n); if (b) pts.push(b.getWorldPosition(new THREE.Vector3()));
+    }
+    if (!pts.length) return;
+    // 床に近い点（足・ひざ・腰）だけで形を決める。立っていれば足、座れば腰・ひざも入る
+    const low = pts.filter((p) => p.y < 0.35);
+    const use = low.length ? low : pts;
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity, minY = Infinity;
+    for (const p of use) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z); }
+    for (const p of pts) minY = Math.min(minY, p.y);
+    const m = AR_SHADOW.margin;
+    shadow.position.set((minX + maxX) / 2, 0.002, (minZ + maxZ) / 2);
+    shadow.scale.set(Math.max(AR_SHADOW.minR, (maxX - minX) / 2 + m), 1, Math.max(AR_SHADOW.minR, (maxZ - minZ) / 2 + m));
+    // いちばん低い骨（つま先）はふだん床から約 0.04 m（baseY）。それより上がった分だけ薄くする
+    const lift = Math.max(0, minY - AR_SHADOW.baseY);
+    shadow.material.opacity = AR_SHADOW.opacity * Math.max(0.25, 1 - lift / AR_SHADOW.fadeH);
+  }
+  // 台を、置いた場所×倍率の逆にする
+  function applyPlace() {
+    place.compose(anchor, anchorQ, new THREE.Vector3(scale, scale, scale)); placeInv.copy(place).invert();
+    rig.matrix.copy(placeInv); rig.matrixWorld.copy(placeInv); rig.matrixWorldNeedsUpdate = true;
+  }
+  function setSize(s) {
+    scale = s;
+    if (session && placed) applyPlace();
+  }
 
   // 床の印（白い輪）。キャラクターの座標で描く
   const reticle = new THREE.Mesh(new THREE.RingGeometry(0.1, 0.13, 40).rotateX(-Math.PI / 2),
@@ -42,7 +95,7 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
     placed = false; hitOk = false;
     rig.matrixAutoUpdate = false;
     park();   // 置くまでは床のずっと下（映らない所）で描き方を準備する
-    scene.add(rig, reticle);
+    scene.add(rig, reticle, shadow);
     rig.add(camera);
     camera.near = 0.03;
     renderer.xr.enabled = true;
@@ -82,7 +135,7 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
     placing = false;
     if (down && down.hit) onRelease && onRelease();
     down = null;
-    rig.remove(camera); scene.remove(rig, reticle);
+    rig.remove(camera); scene.remove(rig, reticle, shadow);
     renderer.xr.enabled = false;
     if (saved) {
       camera.position.copy(saved.pos); camera.quaternion.copy(saved.quat); camera.scale.set(1, 1, 1);
@@ -94,13 +147,11 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
   }
 
   // 置く：床の印の場所に、こちら（スマホ）を向かせて立たせる
-  const _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(1, 1, 1);
   function placeAtHit(viewerRoomPos) {
-    _p.setFromMatrixPosition(hitRoom);
-    const yaw = Math.atan2(viewerRoomPos.x - _p.x, viewerRoomPos.z - _p.z);
-    _q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
-    place.compose(_p, _q, _s); placeInv.copy(place).invert();
-    rig.matrix.copy(placeInv); rig.matrixWorld.copy(placeInv); rig.matrixWorldNeedsUpdate = true;
+    anchor.setFromMatrixPosition(hitRoom);
+    const yaw = Math.atan2(viewerRoomPos.x - anchor.x, viewerRoomPos.z - anchor.z);
+    anchorQ.setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+    applyPlace();
     placed = true;
     setPlacing(false);   // 移ったら、ふだん（触れる）に戻る
   }
@@ -225,10 +276,11 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
       }
     }
     reticle.visible = hitOk && placing;
+    updateShadow();
   }
 
   return {
-    supported, start, end, update, setPlacing,
+    supported, start, end, update, setPlacing, setSize, get size() { return scale; },
     get active() { return !!session; }, get placed() { return placed; }, get placing() { return placing; },
   };
 }

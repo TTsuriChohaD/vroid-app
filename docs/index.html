@@ -113,9 +113,11 @@
   /* AR の間は 3D の画面を隠すので、指はページに触れる。指を動かしてもブラウザが画面の移動として引き取らないように（なでる・揺れもの。2026-11-25） */
   html.ar, html.ar body { touch-action: none; }
   html.ar #stage, html.ar #fps, html.ar #intro { visibility: hidden; }
-  html.ar #modeBtn { display: none; }   /* AR では使わない。かわりに「置き直す」を出す */
-  #placeBtn { display: none; }
-  html.ar #placeBtn { display: inline-flex; }
+  html.ar #modeBtn, html.ar #folderBtn { display: none; }   /* AR では使わない（かわりに「置き直す」「大きさ」を出す。7 つで 1 行に収める） */
+  #placeBtn, #sizeBtn { display: none; }
+  html.ar #placeBtn, html.ar #sizeBtn { display: inline-flex; }
+  /* 大きさ（AR の間だけ。押すたびに 実寸 → 半分 → 机の上）。アイコンの中に倍率の文字 */
+  #sizeBtn span { font-size: 13px; font-weight: 700; letter-spacing: -0.02em; }
   #placeBtn.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   /* 開いているボタン（もう一度押すと閉じる） */
   .icon[aria-expanded="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -184,6 +186,8 @@
   <button class="icon" id="placeBtn" type="button" title="置き直す" aria-label="置き直す">
     <svg viewBox="0 0 24 24"><ellipse cx="12" cy="18" rx="8" ry="3"/><path d="M12 3v10M8.5 9.5L12 13l3.5-3.5"/></svg>
   </button>
+  <!-- 大きさ（AR の間だけ。押すたびに 実寸 → 半分 → 机の上。2026-11-25） -->
+  <button class="icon" id="sizeBtn" type="button" title="大きさ：実寸" aria-label="大きさ：実寸"><span>1</span></button>
   <!-- 見た目のテスト（光・材質・画面の効果。2026-11-24） -->
   <button class="icon" id="lookBtn" type="button" title="見た目の調整" aria-label="見た目の調整">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></svg>
@@ -259,19 +263,19 @@
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
   "@pixiv/three-vrm": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm@3.1.0/lib/three-vrm.module.js",
   "@pixiv/three-vrm-animation": "https://cdn.jsdelivr.net/npm/@pixiv/three-vrm-animation@3.1.0/lib/three-vrm-animation.module.js",
-  "./js/ar.js": "./js/ar.js?v=20261125a",
-  "./js/look.js": "./js/look.js?v=20261125a",
-  "./js/lookpanel.js": "./js/lookpanel.js?v=20261125a",
-  "./js/motion.js": "./js/motion.js?v=20261125a",
-  "./js/pack.js": "./js/pack.js?v=20261125a",
-  "./js/pose.js": "./js/pose.js?v=20261125a",
-  "./js/springs.js": "./js/springs.js?v=20261125a",
-  "./js/springtouch.js": "./js/springtouch.js?v=20261125a",
-  "./js/store.js": "./js/store.js?v=20261125a",
-  "./js/touch.js": "./js/touch.js?v=20261125a",
-  "./js/vrma.js": "./js/vrma.js?v=20261125a"
+  "./js/ar.js": "./js/ar.js?v=20261125c",
+  "./js/look.js": "./js/look.js?v=20261125c",
+  "./js/lookpanel.js": "./js/lookpanel.js?v=20261125c",
+  "./js/motion.js": "./js/motion.js?v=20261125c",
+  "./js/pack.js": "./js/pack.js?v=20261125c",
+  "./js/pose.js": "./js/pose.js?v=20261125c",
+  "./js/springs.js": "./js/springs.js?v=20261125c",
+  "./js/springtouch.js": "./js/springtouch.js?v=20261125c",
+  "./js/store.js": "./js/store.js?v=20261125c",
+  "./js/touch.js": "./js/touch.js?v=20261125c",
+  "./js/vrma.js": "./js/vrma.js?v=20261125c"
 } }
 </script>
-<script type="module" src="js/main.js?v=20261125a"></script>
+<script type="module" src="js/main.js?v=20261125c"></script>
 </body>
 </html>

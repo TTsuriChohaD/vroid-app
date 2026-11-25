@@ -13,7 +13,7 @@ import { setupSprings } from './springs.js';
 import { createLook } from './look.js';
 import { createLookPanel } from './lookpanel.js';
 import { createSpringTouch } from './springtouch.js';
-import { createAR } from './ar.js';
+import { createAR, AR_SIZES } from './ar.js';
 
 const $ = (id) => document.getElementById(id);
 const statusEl = $('status');
@@ -457,7 +457,11 @@ window.vroidApp = {
 // ---------- AR（ar.js。2026-11-24 先生：立体視より先に AR） ----------
 // 床の白い輪をタップ → そこに実寸で立つ（こちら向き）。キャラクターにふれたら部位の反応、外をタップしたら置き直す
 // AR の間は、ページのボタンだけをカメラの映像の上に重ねる（指で回す・寄る操作と、画面の効果は止める）
+// 大きさ（実寸・半分・机の上）は前に選んだものを覚える（2026-11-25。最初は実寸）
+const AR_SIZE_KEY = 'vroid-app-arsize';
+let arSizeIdx = (() => { try { const i = AR_SIZES.findIndex(([s]) => String(s) === localStorage.getItem(AR_SIZE_KEY)); return i < 0 ? 0 : i; } catch (_) { return 0; } })();
 const ar = createAR({
+  size: AR_SIZES[arSizeIdx][0],
   renderer, scene, camera, getVrm: () => vrm,
   onTap: (region, side) => { if (region) onTouch(region, 'tap', side); },
   onAnyTap: () => closePanels(),
@@ -484,6 +488,19 @@ const ar = createAR({
   onPlacingChange: (on) => { $('placeBtn').classList.toggle('on', on); },
 });
 // 置き直す（AR の間だけ出る）：押すと白い輪が出て、タップした所へ移る。もう一度押すとやめる（まだ置いていなければやめない）
+function showArSize() {
+  const [s, name] = AR_SIZES[arSizeIdx];
+  const b = $('sizeBtn');
+  b.firstElementChild.textContent = s === 1 ? '1' : s === 0.5 ? '½' : s === 0.25 ? '¼' : String(s);
+  b.title = '大きさ：' + name; b.setAttribute('aria-label', '大きさ：' + name + '（押すと切り替え）');
+}
+showArSize();
+$('sizeBtn').addEventListener('click', () => {
+  arSizeIdx = (arSizeIdx + 1) % AR_SIZES.length;
+  try { localStorage.setItem(AR_SIZE_KEY, String(AR_SIZES[arSizeIdx][0])); } catch (_) {}
+  ar.setSize(AR_SIZES[arSizeIdx][0]);
+  showArSize();
+});
 $('placeBtn').addEventListener('click', () => {
   if (!ar.active) return;
   closePanels();
