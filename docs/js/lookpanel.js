@@ -166,6 +166,14 @@ export function createLookPanel(root, look, { flash = () => {} } = {}) {
       toggle('立体視（確かめ用：画面を左右に分ける）', () => S.stereo.on, (v) => { S.stereo.on = v; }),
       toggle('立体視のときは効果を軽く（ブルームを切る・にじみを半分の細かさで）', () => S.stereo.lite, (v) => { S.stereo.lite = v; }),
       slider('目の間隔（m）', () => S.stereo.eyeSep, (v) => { S.stereo.eyeSep = v; }, 0.02, 0.1, 0.001),
+      toggle('AR でも画面の効果をかける（ブルーム・色の仕上げ。画面の効果が入のとき）', () => S.ar.post, (v) => { S.ar.post = v; }),
+      toggle('AR のときは効果を軽く（にじみを半分の細かさで）', () => S.ar.lite, (v) => { S.ar.lite = v; }),
+      (() => {
+        const s = el('select', { 'aria-label': 'AR の画面の細かさ' });
+        for (const [v, name] of [[1, 'ふつう'], [0.75, '少し粗く（軽い）'], [0.5, '粗く（もっと軽い）']]) s.append(el('option', { value: v }, name));
+        s.value = String(S.ar.res); s.addEventListener('change', () => { S.ar.res = Number(s.value); changed(); });
+        return el('label', { class: 'row' }, el('span', { class: 'lab' }, 'AR の画面の細かさ（次に AR を始めたときから）'), s);
+      })(),
     ));
     onBuilt(S);
   }

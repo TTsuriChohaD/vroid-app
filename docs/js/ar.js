@@ -28,7 +28,7 @@ const TOUCH_SEGS = [
   ['hips', 'rightUpperLeg'], ['rightUpperLeg', 'rightLowerLeg'], ['rightLowerLeg', 'rightFoot'], ['rightFoot', 'rightToes'],
 ];
 
-export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onStart, onEnd, hint, onPress, onStrokeMove, onRelease, onStroke, onPlacingChange, size = 1 }) {
+export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onStart, onEnd, hint, onPress, onStrokeMove, onRelease, onStroke, onPlacingChange, size = 1, resolution }) {
   const rig = new THREE.Group();   // カメラの台（キャラクターから見た、実際の部屋の置き方の逆）
   rig.name = 'vroidApp_arRig';
   const place = new THREE.Matrix4();      // 置いた場所（部屋の座標）：位置とこちら向きの回転
@@ -118,6 +118,8 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
     document.addEventListener('pointermove', onMove, true);
     document.addEventListener('pointerup', onUp, true);
     document.addEventListener('pointercancel', onCancel, true);
+    // AR の画面の細かさ（見た目の調整パネルの「確認・重さ」。setSession の前に決める）
+    renderer.xr.setFramebufferScaleFactor(resolution ? Math.max(0.25, Math.min(1, resolution() || 1)) : 1);
     await renderer.xr.setSession(s);
     const viewer = await s.requestReferenceSpace('viewer');
     hitSource = await s.requestHitTestSource({ space: viewer });

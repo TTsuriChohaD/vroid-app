@@ -462,6 +462,7 @@ const AR_SIZE_KEY = 'vroid-app-arsize';
 let arSizeIdx = (() => { try { const i = AR_SIZES.findIndex(([s]) => String(s) === localStorage.getItem(AR_SIZE_KEY)); return i < 0 ? 0 : i; } catch (_) { return 0; } })();
 const ar = createAR({
   size: AR_SIZES[arSizeIdx][0],
+  resolution: () => (look.settings.ar ? look.settings.ar.res : 1),
   renderer, scene, camera, getVrm: () => vrm,
   onTap: (region, side) => { if (region) onTouch(region, 'tap', side); },
   onAnyTap: () => closePanels(),
@@ -537,6 +538,6 @@ renderer.setAnimationLoop((time, frame) => {
   if (motion) motion.update(dt);   // 姿勢・しぐさ・表情・目線（カメラが動いたあとに）
   if (springTouch) springTouch.updateDebug();
   updateStopButton();
-  if (ar.active) renderer.render(scene, camera);   // AR は XR の画面にそのまま描く（画面の効果・立体視は使わない）
+  if (ar.active) look.renderXR();   // AR：画面の効果は「確認・重さ」の設定で（立体視は使わない）
   else look.render();   // 立体視・画面全体の効果があればここで（なければ今までと同じ描き方）
 });

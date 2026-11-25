@@ -22,6 +22,9 @@ export const LOOK_BASE = {
     bloom: { on: true, strength: 0.4, radius: 0.5, threshold: 0.8 },
     grade: { on: true, exposure: 1, tone: 'linear', saturation: 1, contrast: 1 } },
   stereo: { on: false, lite: true, eyeSep: 0.064 },   // lite：立体視のときは効果を軽く（ブルームを切る）
+  // AR（2026-11-25）：post＝AR でも画面の効果をかける（post.on のときだけ）、lite＝にじみを半分の細かさで、
+  // res＝AR の画面の細かさ（1・0.75・0.5。次に AR を始めたときから効く。three の setFramebufferScaleFactor）
+  ar: { post: true, lite: true, res: 1 },
   fps: false,
   springDebug: false,   // 揺れものの補助表示（当たり判定の球と揺れものの点。springtouch.js）
 };
@@ -177,6 +180,14 @@ export function createLook(renderer, scene, camera) {
 
   // FPS
   let fpsEl = null, frames = 0, fpsT = performance.now();
+  function fpsTick(label) {
+    frames++;
+    const now = performance.now();
+    if (now - fpsT > 500) {
+      if (fpsEl) fpsEl.textContent = Math.round(frames * 1000 / (now - fpsT)) + ' FPS' + label;
+      frames = 0; fpsT = now;
+    }
+  }
   function render() {
     const size = renderer.getSize(new THREE.Vector2());
     const W = size.x, H = size.y;
@@ -199,17 +210,48 @@ export function createLook(renderer, scene, camera) {
     renderer.autoClear = ac;
     renderer.setScissorTest(false);
     renderer.setViewport(0, 0, W, H);
-    // FPS
-    frames++;
-    const now = performance.now();
-    if (now - fpsT > 500) {
-      if (fpsEl) fpsEl.textContent = Math.round(frames * 1000 / (now - fpsT)) + ' FPS' + (S.stereo.on ? '（立体視）' : '') + (S.post.on ? '' : '・効果なし');
-      frames = 0; fpsT = now;
+    fpsTick((S.stereo.on ? '（立体視）' : '') + (S.post.on ? '' : '・効果なし'));
+  }
+
+  // AR のとき（2026-11-25 先生：AR の見た目と重さ）。three は AR の間、描くときに自動で AR のカメラに切り替えるので、
+  // 後処理（別の画面に描く → にじみ → 仕上げを AR の画面へ）の間だけ切り替えを止め、AR のカメラ（1 枚目）を直接使う。
+  // AR のカメラは台（rig）に載っていて、three が台の位置を掛けた matrixWorld を作るので、描くときに作り直させない
+  function renderXR() {
+    const P = S.post, A = S.ar || {};
+    if (!(P.on && A.post)) { renderer.render(scene, camera); fpsTick('（AR・効果なし）'); return; }
+    const xr = renderer.xr;
+    const xrRT = renderer.getRenderTarget();   // AR の画面（three がコマの初めに選んでいる）
+    xr.updateCamera(camera);                   // 台の位置を掛けた AR のカメラと、目線に使うカメラを今のコマに合わせる
+    const camXR = xr.getCamera();
+    const cam = camXR.cameras && camXR.cameras.length ? camXR.cameras[0] : camXR;
+    const vp = cam.viewport || new THREE.Vector4(0, 0, renderer.getSize(new THREE.Vector2()).x, renderer.getSize(new THREE.Vector2()).y);
+    const keep = cam.matrixWorldAutoUpdate;
+    cam.matrixWorldAutoUpdate = false;
+    xr.enabled = false;
+    try {
+      ensureSize(Math.max(1, Math.round(vp.z)), Math.max(1, Math.round(vp.w)), !!A.lite);
+      renderer.setScissorTest(false);
+      renderer.setRenderTarget(sceneRT);
+      renderer.setClearColor(0x000000, 0); renderer.clear();
+      renderer.render(scene, cam);
+      const bOn = P.bloom.on;
+      if (bOn) bloom.render(renderer, null, sceneRT, 0, false);
+      finishMat.uniforms.tScene.value = sceneRT.texture;
+      finishMat.uniforms.tBloom.value = bloom.renderTargetsHorizontal[0].texture;
+      finishMat.uniforms.bloomOn.value = bOn ? 1 : 0;
+      renderer.setRenderTarget(xrRT);
+      renderer.setViewport(vp.x, vp.y, vp.z, vp.w);
+      renderer.setClearColor(0x000000, 0); renderer.clear();
+      finish.render(renderer);
+    } finally {
+      xr.enabled = true;
+      cam.matrixWorldAutoUpdate = keep;
     }
+    fpsTick('（AR）');
   }
 
   return {
-    attach, render, applyAll,
+    attach, render, renderXR, applyAll,
     get settings() { return S; },
     set settings(v) { S = mergeLook(v); applyAll(); },
     setFpsElement(el) { fpsEl = el; },
