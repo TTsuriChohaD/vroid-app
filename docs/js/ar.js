@@ -16,6 +16,18 @@ export const AR_SIZES = [[1, '実寸'], [0.5, '半分'], [0.25, '机の上']];
 // 足元にうっすらした丸い影を敷く。腰と両足の位置から毎コマ形を決め、足が床から離れるほど薄くする（ジャンプ）
 export const AR_SHADOW = { opacity: 0.38, margin: 0.14, minR: 0.22, baseY: 0.04, fadeH: 0.2 };
 
+// 小さくしたときの触りやすさ（2026-11-25 先生：小さくすると触ったときの反応がしづらい）：
+// 指の線がキャラクターに当たらなかったら、線のそばを通る骨を探し、その骨へ向けてもう一度線を出す。
+// 届く範囲＝体の太さ reach（キャラクターの寸法 m）＋指のまわり slopPx（画面の点）。実寸のときは使わない（今まで通り）
+export const AR_TOUCH = { reach: 0.08, slopPx: 24 };
+const TOUCH_SEGS = [
+  ['hips', 'spine'], ['spine', 'chest'], ['chest', 'upperChest'], ['upperChest', 'neck'], ['neck', 'head'], ['head', '@top'],
+  ['upperChest', 'leftUpperArm'], ['leftUpperArm', 'leftLowerArm'], ['leftLowerArm', 'leftHand'], ['leftHand', '@leftFingers'],
+  ['upperChest', 'rightUpperArm'], ['rightUpperArm', 'rightLowerArm'], ['rightLowerArm', 'rightHand'], ['rightHand', '@rightFingers'],
+  ['hips', 'leftUpperLeg'], ['leftUpperLeg', 'leftLowerLeg'], ['leftLowerLeg', 'leftFoot'], ['leftFoot', 'leftToes'],
+  ['hips', 'rightUpperLeg'], ['rightUpperLeg', 'rightLowerLeg'], ['rightLowerLeg', 'rightFoot'], ['rightFoot', 'rightToes'],
+];
+
 export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onStart, onEnd, hint, onPress, onStrokeMove, onRelease, onStroke, onPlacingChange, size = 1 }) {
   const rig = new THREE.Group();   // カメラの台（キャラクターから見た、実際の部屋の置き方の逆）
   rig.name = 'vroidApp_arRig';
@@ -169,6 +181,47 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
   // 画面の上のボタンに使っているので、指の操作もページに届く）。同じタップを 2 回数えないよう、続けて来た方は捨てる
   const ray = new THREE.Raycaster();
   let handledAt = -1e9;
+  // 線がキャラクターに当たった所（three の当たり）。小さくしているときは、線のそばを通る骨の方へもう一度線を出す
+  const _o = new THREE.Vector3(), _d = new THREE.Vector3();
+  function pickFrom(origin, dir) {
+    const vrm = getVrm();
+    if (!vrm || !origin) return null;
+    ray.set(origin, dir);
+    const meshHit = () => ray.intersectObject(vrm.scene, true).filter((h) => h.object.isMesh && h.object.visible)[0] || null;
+    const h = meshHit();
+    if (h || scale >= 1) return h;
+    const wp = (n) => { const b = vrm.humanoid.getNormalizedBoneNode(n); return b ? b.getWorldPosition(new THREE.Vector3()) : null; };
+    const end = (n) => {
+      if (n === '@top') { const hd = wp('head'), nk = wp('neck'); return hd && nk ? hd.clone().add(hd.clone().sub(nk).setLength(0.17)) : null; }
+      if (n === '@leftFingers' || n === '@rightFingers') { const side = n === '@leftFingers' ? 'left' : 'right'; const hd = wp(side + 'Hand'), la = wp(side + 'LowerArm'); return hd && la ? hd.clone().add(hd.clone().sub(la).setLength(0.09)) : null; }
+      return wp(n);
+    };
+    const tanHalf = 1 / camera.projectionMatrix.elements[5];
+    let best = null;
+    for (const [a, b] of TOUCH_SEGS) {
+      const A = end(a), B = end(b); if (!A || !B) continue;
+      // 線（origin + t·dir）と骨の線分 A〜B のいちばん近い所
+      const u = B.clone().sub(A), w = origin.clone().sub(A);
+      const aa = dir.dot(dir), bb = dir.dot(u), cc = u.dot(u), dd = dir.dot(w), ee = u.dot(w);
+      const den = aa * cc - bb * bb;
+      let sc = den > 1e-9 ? (bb * ee - cc * dd) / den : 0, tc = den > 1e-9 ? (aa * ee - bb * dd) / den : 0;
+      tc = Math.min(1, Math.max(0, tc));
+      sc = Math.max(0, (u.clone().multiplyScalar(tc).sub(w)).dot(dir) / aa);
+      const P = origin.clone().addScaledVector(dir, sc), Q = A.clone().addScaledVector(u, tc);
+      const dist = P.distanceTo(Q);
+      const limit = AR_TOUCH.reach + AR_TOUCH.slopPx * (2 * sc * tanHalf / innerHeight);
+      if (dist < limit && (!best || dist / limit < best.k)) best = { k: dist / limit, Q };
+    }
+    if (!best) return null;
+    ray.set(_o.copy(origin), _d.copy(best.Q).sub(origin).normalize());
+    return meshHit();
+  }
+  function hitInfo(h) {
+    const vrm = getVrm();
+    const hips = vrm.humanoid.getNormalizedBoneNode('hips');
+    const local = hips ? hips.worldToLocal(h.point.clone()) : h.point;
+    return { point: h.point.clone(), side: local.x > 0 ? 'left' : 'right', region: regionFromSkin(vrm, h) || regionAt(vrm, h.point) };
+  }
   function handleTap(origin, dir, via) {
     const now = performance.now();
     if (now - handledAt < 400) return;   // もう一方の受け取り方で、同じタップを処理した
@@ -179,17 +232,9 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
       else hint && hint('白い輪が見えているときにタップしてください');
       return;
     }
-    const vrm = getVrm();
-    if (placed && vrm && origin) {
-      ray.set(origin, dir);
-      const hits = ray.intersectObject(vrm.scene, true).filter((h) => h.object.isMesh && h.object.visible);
-      if (hits.length) {
-        const h = hits[0];
-        const hips = vrm.humanoid.getNormalizedBoneNode('hips');
-        const local = hips ? hips.worldToLocal(h.point.clone()) : h.point;
-        onTap && onTap(regionFromSkin(vrm, h) || regionAt(vrm, h.point), local.x > 0 ? 'left' : 'right');
-        return;
-      }
+    if (placed && origin) {
+      const h = pickFrom(origin, dir);
+      if (h) { const i = hitInfo(h); onTap && onTap(i.region, i.side); }
     }
   }
   function onSelect(e) {
@@ -215,12 +260,9 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
   function hitAt(x, y) {
     const vrm = getVrm();
     if (!placed || placing || !vrm) return null;
-    const hits = screenRay(x, y).intersectObject(vrm.scene, true).filter((h) => h.object.isMesh && h.object.visible);
-    if (!hits.length) return null;
-    const h = hits[0];
-    const hips = vrm.humanoid.getNormalizedBoneNode('hips');
-    const local = hips ? hips.worldToLocal(h.point.clone()) : h.point;
-    return { point: h.point.clone(), side: local.x > 0 ? 'left' : 'right', region: regionFromSkin(vrm, h) || regionAt(vrm, h.point) };
+    const r = screenRay(x, y);
+    const h = pickFrom(r.ray.origin.clone(), r.ray.direction.clone());
+    return h ? hitInfo(h) : null;
   }
   const onDown = (e) => {
     if (down || (e.target.closest && e.target.closest(UI))) return;
@@ -281,6 +323,7 @@ export function createAR({ renderer, scene, camera, getVrm, onTap, onAnyTap, onS
 
   return {
     supported, start, end, update, setPlacing, setSize, get size() { return scale; },
+    pick: pickFrom,   // PC で確かめる用（線がキャラクターに当たる所。小さいときは近くも）
     get active() { return !!session; }, get placed() { return placed; }, get placing() { return placing; },
   };
 }
